@@ -48,7 +48,28 @@ Runs (all v19, H100, `research/image-track/remote/i1.sh`, commit 0191d24):
 | i1-v19-px800k | budget 800k | eval, no blind |
 | cal-v19-px800k | budget 800k | NB groups 300-599, no blind |
 
-Results: see "I1 results" below.
+Wall (H100, no fla kernels): eval+blind 322 s at 448, 455 s at 400k; held-out NB 233 s / 227 s.
+
+### I1 results (v19, no training)
+
+Image temperatures fitted on held-out NB groups 300-599 (`temps.py fit`), then applied to
+the evaluation rows (`temps.py apply`; image-removed rows keep the text temperatures).
+
+| setting | NB acc | NB G-Acc | NB ECE | POPE acc | POPE Brier | POPE ECE | IJB exact | IJB all | IJB ECE | blind conf NB/POPE | blind ECE NB/POPE |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 448 px (baseline, reproduces the brief) | 0.784 | 0.327 | 0.014 | 0.877 | 0.202 | 0.072 | 37/60 | 0.430 | 0.107 | 0.652 / 0.725 | 0.152 / 0.225 |
+| 448 px + image T (noul 0.810, choice 0.775) | 0.784 | 0.327 | 0.019 | 0.877 | 0.196 | 0.061 | 37/60 | 0.430 | 0.101 | same | same |
+| 400k px | 0.788 | 0.347 | 0.029 | 0.858 | 0.209 | 0.082 | 40/60 | 0.555 | 0.089 | same | same |
+| **400k px + image T (noul 0.759, choice 0.790)** | 0.788 | 0.347 | 0.029 | 0.858 | 0.203 | 0.057 | **40/60** | 0.555 | **0.072** | same | same |
+
+Per family (IJB acc), 448 -> 400k: ArxivQA 0.55 -> 0.60, CLEVR-HOPE 0.85 -> 0.90, FinQA
+0.15 -> 0.20, Geometry3K 0.45 -> 0.50, Mind2Web 0.25 -> 0.17, ScreenSpot 0.33 -> 0.69.
+POPE's COCO photos (640x480 = 307k px) are not downscaled at 400k, and v19 loses 1.8 points
+there at full resolution; everything else gains. The image temperatures are sharper than
+the text ones for noul (0.76-0.81 vs 0.91) and change accuracy nowhere (monotone per row).
+
+**I1 pick: 400k-pixel budget + image temperatures** (best IJB exact, IJB ECE, NB G-Acc;
+POPE -1.8 pt is the cost). Training runs use the same 400k budget.
 
 ## Training data (I2)
 
