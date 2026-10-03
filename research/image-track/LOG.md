@@ -68,8 +68,16 @@ POPE's COCO photos (640x480 = 307k px) are not downscaled at 400k, and v19 loses
 there at full resolution; everything else gains. The image temperatures are sharper than
 the text ones for noul (0.76-0.81 vs 0.91) and change accuracy nowhere (monotone per row).
 
+Budget 800k (v19, no image T; its held-out fit was stopped to free the host): NB acc 0.792,
+G-Acc 0.357, ECE 0.027; POPE 0.858 / Brier 0.209 / ECE 0.082; IJB exact **41/60**, IJB all
+0.617, IJB ECE 0.057; ArxivQA 0.65, CLEVR 0.90, FinQA 0.20, Geometry 0.50, Mind2Web 0.33,
+ScreenSpot 0.83. More pixels keep helping IJB (screens most) at twice the image tokens.
+
 **I1 pick: 400k-pixel budget + image temperatures** (best IJB exact, IJB ECE, NB G-Acc;
-POPE -1.8 pt is the cost). Training runs use the same 400k budget.
+POPE -1.8 pt is the cost; 400k is the budget the strongest 4B entry serves, 800k is a
+further +1 exact at 2x tokens). Training runs use the 400k budget.
+
+Host 1 cost: 09:01:20-09:35:51 UTC = 0.575 h x $2.75 = **$1.58**.
 
 ## Training data (I2)
 
