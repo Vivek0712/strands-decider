@@ -99,3 +99,17 @@ No instance was created. The track is still stopped before training; spend is un
   sha256 5c381fb0…; raw c309aaec….
 - Arms (`research/text-track/arm.sh`: train → `calibrate` on the rebuilt held-out file → JevBench v1, one GPU each):
   GPU0 t3-control, GPU1 t3-noanchor-yn, GPU2 t4-teacher27b, GPU3 t34-combined; all seed 0, 1,500 steps.
+
+### Run 3 results (seed 0; JevBench v1 public 231 tasks, scored with score_run.py v1.5 proxy)
+
+| arm | n_correct | proxy Intelligence | choice / noul / score competence | yes/no in band (of 74) | yes/no right | Brier | ECE | yes share | val_acc | train wall |
+|---|---|---|---|---|---|---|---|---|---|---|
+| v19 (run 0) | 167 | 32.1 | 65.4 / −32.4 / 63.4 | 48 | 51 | 0.3477 | 0.0501 | 0.486 | — | — |
+| t3-control | 172 | 34.6 | 70.0 / −29.7 / 63.4 | 44 | 51 | 0.3535 | 0.0573 | 0.405 | 0.8575 | 63 min |
+| t3-noanchor-yn | 169 | 34.5 | 64.4 / −24.3 / 63.4 | 41 | 54 | 0.3582 | 0.0361 | 0.419 | 0.845 | 91 min |
+| t4-teacher27b | 171 | 39.4 | 68.2 / −13.5 / 63.4 | 37 | 52 | 0.3515 | 0.0517 | 0.392 | 0.850 | 59 min |
+| t34-combined | 169 | **40.6** | 66.5 / −8.1 / 63.4 | 35 | 52 | 0.3492 | 0.0439 | 0.419 | 0.8525 | 59 min |
+
+Read: the 27B teacher is what moves yes/no decisiveness (band 48 → 37); dropping the anchor adds a little (→ 35).
+More training alone (t3-control) helps choice, barely moves yes/no. Single seed on 74 yes/no items: differences of
+a few items are within noise, hence seeds 1 and 2 of t4 and t34 (launched 12:19Z, GPU0-3). Exploratory, not confirmatory.
