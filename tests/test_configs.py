@@ -62,3 +62,10 @@ def test_v19_saved_configs_load():
     # The released run was configs/train.yaml under training/run_recipe.sh FAST=1, which
     # turns gradient checkpointing off and precomputes the frozen-KL reference (speed only).
     assert _differing_keys(saved, _load("configs", "train.yaml")) == {"gradient_checkpointing", "precompute_frozen_kl"}
+
+
+@pytest.mark.parametrize("seed", [1, 2])
+def test_v19_yn27b_seeds_differ_only_in_seed_and_output_dir(seed):
+    rep, ref = (_load("configs", "experiments", f"v19-yn27b{s}.yaml") for s in (f"-seed{seed}", ""))
+    assert _differing_keys(rep, ref) == {"seed", "output_dir"}
+    assert rep["seed"] == seed

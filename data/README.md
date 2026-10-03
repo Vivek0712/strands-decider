@@ -39,6 +39,15 @@ BoardgameQA, HotpotQA, HelpSteer2) are downloaded and converted by `build`, `fet
 `multistep` and `adequacy`. Reproducing a recipe needs no paid model-API calls. It does
 need the public downloads above, and the base and teacher models from Hugging Face.
 
+One exception: the Qwen3.5-27B yes/no labels that `configs/experiments/v19-yn27b.yaml` trains
+on (`training/recipe.sh teacher_yn`, `src/strands_decider/data/teacher_yn.py`) are not committed;
+the step relabels them. The file the recorded runs trained on,
+`data/teacher_yn_qwen35-27b.jsonl` (58,246 rows: 45,337 kept 27B rows of 54,857 labelled,
+over v14's 12,909 replay rows), had sha256
+`5c381fb0237f464842fe2e8aa7301da9d33bfd53b9ef69d7943a997ca30fca0c`. A relabel batches
+the rows differently from the recorded run, so its bf16 probabilities, and the hash, need
+not match byte for byte.
+
 ## Data sources and licences
 
 The base corpus uses public classification datasets through `data/recipes.py`. The

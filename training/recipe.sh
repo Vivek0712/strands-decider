@@ -26,8 +26,8 @@
 # `parent` always writes checkpoints/hobson-2b-recipe-parent, where `replay` reads it, and
 # `train` always writes to $CKPT, whatever the configs say.
 # Usage: training/recipe.sh STEP [STEP ...], each one of
-#   build fetch multistep generated adequacy catchall teacher distill parent replay train
-#   calibrate eval all
+#   build fetch multistep generated adequacy catchall teacher distill teacher_yn parent replay
+#   train calibrate eval all
 #
 # Synthetic data is committed; public data is not. data/synthetic/ holds every generated
 # row and every model-produced label the recipes train on, as the exact files used: the
@@ -42,6 +42,15 @@
 #   TRAIN_CONFIG=configs/experiments/v20.yaml CKPT=checkpoints/hobson-2b-v20-retrain \
 #     training/recipe.sh train calibrate eval
 # `distill` uses the committed teacher and replay labels, so no parent is trained.
+#
+# Continuing v19 with the 27B yes/no teacher (configs/experiments/v19-yn27b.yaml, three seeds;
+# docs/better-accuracy.md has the evaluation and the recorded results):
+#   training/recipe.sh build fetch multistep generated adequacy teacher_yn
+#   hf download StrandsAgents/strands-decider-2B-hobson-v19 \
+#     --revision bb282d786bc251fd4e3068de3ada9ddbb38127cd --local-dir checkpoints/v19
+#   TRAIN_CONFIG=configs/experiments/v19-yn27b.yaml CKPT=checkpoints/v19-yn27b training/recipe.sh train calibrate
+# `teacher_yn` reads Qwen3.5-27B in bf16 (an 80 GB GPU; about 31 GPU-minutes on H100). Its labels
+# are not committed: data/README.md gives the hash of the file the recorded runs trained on.
 # NGPU=8 uses eight GPUs: teacher and replay one shard per GPU, then a merge; parent and
 # train under torchrun (training/README.md#training-on-several-gpus). PARENT_CONFIG and TRAIN_CONFIG
 # replace the two training configs.
@@ -174,6 +183,18 @@ distill() {
     --append data/replay_v14_multistep.jsonl --out data/teacher_v20.jsonl
 }
 
+# Qwen3.5-27B's distributions on the yes/no rows (data/teacher_yn.py), kept where they agree
+# with gold, over v14's replay distributions: configs/experiments/v19-yn27b.yaml's teacher_file.
+teacher_yn() {
+  verify data/train_v5.jsonl data/multistep_v14.jsonl data/synthetic/generated_v16.jsonl \
+    data/synthetic/generated_v18.jsonl data/synthetic/adequacy_gen.jsonl \
+    data/synthetic/replay_v14_multistep.jsonl
+  cp data/synthetic/replay_v14_multistep.jsonl data/
+  label strands_decider.data.teacher_yn label --out data/teacher_yn_qwen35-27b_raw.jsonl
+  "$PY" -m strands_decider.data.teacher_yn build --raw data/teacher_yn_qwen35-27b_raw.jsonl \
+    --base data/replay_v14_multistep.jsonl --out data/teacher_yn_qwen35-27b.jsonl
+}
+
 parent() {
   verify data/train_v5.jsonl data/multistep_v14.jsonl
   fit "$PARENT_CONFIG" --output-dir checkpoints/hobson-2b-recipe-parent
@@ -214,7 +235,7 @@ evaluate() {
 [ $# -gt 0 ] || set -- all
 for STEP in "$@"; do
   case "$STEP" in
-    build|fetch|multistep|generated|adequacy|catchall|teacher|distill|parent|replay|train|calibrate) "$STEP" ;;
+    build|fetch|multistep|generated|adequacy|catchall|teacher|distill|teacher_yn|parent|replay|train|calibrate) "$STEP" ;;
     eval) evaluate ;;
     all) build; fetch; multistep; generated; adequacy; teacher; parent; replay; train; calibrate; evaluate ;;
     *) echo "unknown step: $STEP" >&2; exit 2 ;;
