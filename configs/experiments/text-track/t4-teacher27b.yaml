@@ -1,0 +1,43 @@
+# Text track T4: as t3-control.yaml (anchor ON for every row), but the teacher file adds
+# Qwen3.5-27B labels on the yes/no and adequacy rows, kept only where the 27B agrees with
+# gold (research/text-track/teacher_yn.py), merged over the v14 multistep replay.
+train_files: ["data/train_v5.jsonl", "data/multistep_v14.jsonl", "data/generated_v16.jsonl",
+              "data/generated_v18.jsonl", "data/adequacy_hs2.jsonl", "data/adequacy_gen.jsonl"]
+val_fraction: 0.03
+base_model: "Qwen/Qwen3.5-2B-Base"
+continue_from: "checkpoints/v19"
+num_slots: 24
+head_type: "pointer"
+pointer_dim: 256
+head_init: "random"
+kl_frozen_weight: 0.3
+kl_frozen_skip_kinds: []
+teacher_file: "data/teacher_t4.jsonl"   # 27B labels where they agree with gold, over the v14 multistep replay
+teacher_weight: 1.0
+head_dropout: 0.05
+max_length: 4096
+use_lora: true
+lora_r: 16
+lora_alpha: 32
+lora_targets: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj",
+               "in_proj_qkv", "in_proj_z", "in_proj_a", "in_proj_b", "out_proj"]
+freeze_torso: false
+epochs: 1
+max_steps: 1500         # ~0.4 epoch at effective batch 32
+micro_batch_size: 8
+grad_accum: 4
+lr: 0.0001
+head_lr: 0.001
+weight_decay: 0.01
+warmup_ratio: 0.03
+max_grad_norm: 1.0
+gradient_checkpointing: true
+precompute_frozen_kl: true
+shuffle_options: true
+group_by_length: true
+ordinal_smoothing: 0.1
+reverse_score_prob: 0.5
+output_dir: "checkpoints/t4-teacher27b"
+seed: 0
+log_every: 20
+eval_every: 500
