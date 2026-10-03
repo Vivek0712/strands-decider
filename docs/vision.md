@@ -121,4 +121,5 @@ without the image, v19 still answers at a mean confidence of 0.652 on NaturalBen
 - One run per system, on one H100 each (fp32 for v19 and the base, bf16 for Mapika).
 
 The script is `evaluation/vision/run.py`; [evaluation/vision/README.md](../evaluation/vision/README.md)
-has the exact command and a link to every per-item result.
+has the exact command and a link to the recorded runs: per-item probabilities for v19 and
+the base, and Mapika's summary.

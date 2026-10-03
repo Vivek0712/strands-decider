@@ -23,4 +23,6 @@ datasets by [`ijb_preview.py`](https://github.com/Vivek0712/vision-decider/blob/
 
 **Recorded results:** [vision-eval-2026-10-03](https://github.com/Vivek0712/strands-decider/releases/tag/vision-eval-2026-10-03), made with this script at commit `333b7f4` on one
 NVIDIA H100 per machine (`--device cuda`; v19 on one, `qwen,mapika` on the other), with the command above. It holds each system's
-`summary.json` and per-item probabilities (`*.jsonl`).
+`summary.json`, and per-item probabilities (`*.jsonl`) for v19 and the base. Mapika's
+per-item results are not included, so the paired CIs against it cannot be recomputed from the
+release alone.
