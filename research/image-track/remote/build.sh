@@ -1,7 +1,7 @@
 #!/bin/bash
 # Build the image training set on the GPU host (CPU work, overlaps GPU evals).
 set -euo pipefail
-B=/root/sd/research/image-track/buildersers
+B=/root/sd/research/image-track/builders
 O=/root/data; mkdir -p $O/coco
 cd $B
 W=${W:-16}
