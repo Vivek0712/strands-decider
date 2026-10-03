@@ -52,7 +52,7 @@ def target_text(repr_: str) -> str:
 
 
 def process(args):
-    path, out_dir, seed, per_file = args
+    path, out_dir, seed, per_file, exclude = args
     import pyarrow.parquet as pq
     from PIL import Image, ImageDraw
 
@@ -66,6 +66,8 @@ def process(args):
         for r in tb.to_pylist():
             if len(rows) >= per_file:
                 return rows
+            if r["website"] in exclude:  # websites of the rebuilt preview items: never trained on
+                continue
             if not r["pos_candidates"] or r["screenshot"] is None:
                 continue
             pos = bbox(r["pos_candidates"][0])
@@ -157,6 +159,7 @@ def process(args):
                 task = "screen/m2w_element"
             rows.append(row("choice", q, opts, order.index(gold), task=task, source="mind2web",
                             images=[name], source_id=f"m2w-{r['annotation_id']}"))
+            rows[-1]["website"] = r["website"]
     return rows
 
 
@@ -166,10 +169,12 @@ def main() -> None:
     ap.add_argument("--out", required=True, help="data root; images go to <out>/m2w/")
     ap.add_argument("--per-file", type=int, default=220)
     ap.add_argument("--workers", type=int, default=16)
+    ap.add_argument("--exclude-websites", nargs="*", default=["budget"],
+                    help="websites of the Image JevBench preview's Mind2Web items (all 12 are budget.com)")
     a = ap.parse_args()
     assert all("/train-" in p for p in a.parquets), "TRAIN split only"
     os.makedirs(os.path.join(a.out, "m2w"), exist_ok=True)
-    jobs = [(p, a.out, i, a.per_file) for i, p in enumerate(sorted(a.parquets))]
+    jobs = [(p, a.out, i, a.per_file, set(a.exclude_websites)) for i, p in enumerate(sorted(a.parquets))]
     with mp.Pool(a.workers) as pool:
         rows = [r for part in pool.imap_unordered(process, jobs) for r in part]
     write(os.path.join(a.out, "m2w.jsonl"), rows)

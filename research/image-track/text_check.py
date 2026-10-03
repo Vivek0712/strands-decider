@@ -1,0 +1,74 @@
+"""Text non-regression: a checkpoint on held-out text rows, served the text way.
+
+Rows: the committed held-out evaluation splits of v19's own generated training data
+(data/synthetic/*_eval.jsonl: generated_v16_eval, generated_v18_eval, adequacy_gen_eval,
+none of which any image run trains on). Each row is rendered exactly as the server
+renders it (prompting.build_prompt, canonical option order), forwarded whole through
+the multimodal torso with no image (the same weights the text path runs through), and
+read with the checkpoint's text temperatures.
+
+    python research/image-track/text_check.py --checkpoint <dir|v19> --out text.json
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+
+import torch
+
+from strands_decider.data.format import Example
+from strands_decider.infer import _option_token_index
+from strands_decider.modeling import masked_log_softmax
+from strands_decider.prompting import build_prompt
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../evaluation/vision"))
+from metrics import summarise  # noqa: E402
+
+V19, V19_REV = "StrandsAgents/strands-decider-2B-hobson-v19", "bb282d786bc251fd4e3068de3ada9ddbb38127cd"
+FILES = ["generated_v16_eval.jsonl", "generated_v18_eval.jsonl", "adequacy_gen_eval.jsonl"]
+
+
+@torch.no_grad()
+def main() -> None:
+    from strands_decider.vision import VisionDeciderModel, qwen_base
+
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--checkpoint", default=V19)
+    ap.add_argument("--data-dir", default=os.path.join(os.path.dirname(__file__), "../../data/synthetic"))
+    ap.add_argument("--out", required=True)
+    a = ap.parse_args()
+    ck = a.checkpoint
+    if ck == V19:
+        from huggingface_hub import snapshot_download
+        ck = snapshot_download(V19, revision=V19_REV)
+    model = VisionDeciderModel.load(ck).to("cuda").eval()
+    temps = model.config.temperature_by_kind
+    res = []
+    for f in FILES:
+        for i, line in enumerate(open(os.path.join(a.data_dir, f))):
+            ex = Example.from_dict(json.loads(line))
+            prompt, rq = build_prompt(ex.state, ex.to_question())
+            enc = model.tokenizer(prompt, return_offsets_mapping=True)
+            if len(enc["input_ids"]) > model.config.max_length:
+                continue
+            opt = _option_token_index(enc["offset_mapping"], rq.option_spans, len(prompt) - len(rq.text))
+            ids = torch.tensor([enc["input_ids"]], device="cuda")
+            qwen_base(model.torso).rope_deltas = None
+            out = model(ids, torch.ones_like(ids), torch.tensor([rq.n_slots], device="cuda"),
+                        opt_idx=torch.tensor([opt], device="cuda"),
+                        temperature=temps.get(ex.kind, model.config.temperature))
+            p = masked_log_softmax(out["logits"].float(), torch.tensor([rq.n_slots], device="cuda")).exp()[0]
+            # slot k shows canonical option k (no shuffling): probs are in option order
+            res.append({"id": f"{f}:{i}", "file": f, "kind": ex.kind, "gold": ex.label,
+                        "probs": [float(x) for x in p[: rq.n_slots]]})
+    summary = {"checkpoint": a.checkpoint, "all": summarise(res)["all"],
+               "by_file": {f: summarise([r for r in res if r["file"] == f])["all"] for f in FILES}}
+    json.dump({"summary": summary, "rows": res}, open(a.out, "w"))
+    print(json.dumps(summary, indent=1))
+
+
+if __name__ == "__main__":
+    main()
