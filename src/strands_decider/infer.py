@@ -74,6 +74,9 @@ class UnforkableCache(TypeError):
 # `values`; a linear-attention (Gated DeltaNet) layer's `conv_states` and
 # `recurrent_states`, each a dict of tensors keyed by state index. First dim is the batch.
 _ROW_STATES = ("keys", "values", "conv_states", "recurrent_states")
+# Tensors a cache layer may hold that have no batch dimension, shared by every row: a
+# sliding-window layer's (Gemma 4's) window size.
+_LAYER_CONSTANTS = ("_sliding_window_tensor",)
 
 
 def _fork_layered_cache(cache: Any, n: int) -> Any:
@@ -86,6 +89,9 @@ def _fork_layered_cache(cache: Any, n: int) -> Any:
     place, so a fork that shared them would corrupt the prefix it came from. The
     approach is decider-2b's (`decider/shared_prefix.py`, Apache-2.0).
 
+    Sliding-window layers (Gemma 4) fork the same way: they hold only the last window of
+    keys and values, and a window-size constant the fork shares (_LAYER_CONSTANTS).
+
     Raises UnforkableCache for a layer holding tensors under any other name: we cannot tell
     whether such a tensor has a batch dimension, so the caller falls back to batched
     encoding rather than guess.
@@ -95,6 +101,8 @@ def _fork_layered_cache(cache: Any, n: int) -> Any:
     for layer in cache.layers:
         nl = copy.copy(layer)
         for name, v in list(vars(nl).items()):
+            if name in _LAYER_CONSTANTS:
+                continue
             is_state = name in _ROW_STATES
             if isinstance(v, torch.Tensor):
                 if not is_state:

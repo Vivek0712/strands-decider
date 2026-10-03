@@ -61,6 +61,7 @@ class TrainConfig(YamlConfig):
 
     # model
     base_model: str = "Qwen/Qwen3-1.7B-Base"
+    base_model_revision: str | None = None  # a Hub commit to pin the base to
     num_slots: int = 24
     head_hidden: int = 0
     head_dropout: float = 0.05
@@ -291,6 +292,7 @@ def train(cfg: TrainConfig) -> str:
     print(f"[strands-decider] loading base model {cfg.base_model}")
     model_cfg = StrandsDeciderConfig(
         base_model=cfg.base_model,
+        base_model_revision=cfg.base_model_revision,
         num_slots=cfg.num_slots,
         head_hidden=cfg.head_hidden,
         head_dropout=cfg.head_dropout,
