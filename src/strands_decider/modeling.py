@@ -498,7 +498,9 @@ class StrandsDeciderModel(nn.Module):
         *,
         device_map: str | None = None,
         attn_implementation: str | None = None,
+        trainable: bool = False,
     ) -> StrandsDeciderModel:
+        """A saved checkpoint, its adapter frozen unless `trainable` (to continue training it)."""
         path = checkpoint_dir(path)
         config = StrandsDeciderConfig.from_json(config_path(path))
         # Check the checkpoint's own files before the torso loads its 2B weights. Without
@@ -518,7 +520,7 @@ class StrandsDeciderModel(nn.Module):
         if config.use_lora:
             from peft import PeftModel
 
-            torso = PeftModel.from_pretrained(torso, lora_dir, is_trainable=False)
+            torso = PeftModel.from_pretrained(torso, lora_dir, is_trainable=trainable)
 
         # __init__ would re-attach LoRA on top of the adapter we just loaded, so build
         # the module directly and restore the head weights in place.

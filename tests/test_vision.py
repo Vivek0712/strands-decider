@@ -156,6 +156,14 @@ def test_adapter_lands_on_the_decoder_and_vision_is_frozen(engines):
     assert not any(p.requires_grad for p in vision.model.torso.base_model.model.visual.parameters())
 
 
+def test_adapter_is_trainable_only_when_asked(ckpt):
+    def lora_grads(model):
+        return {p.requires_grad for n, p in model.torso.named_parameters() if "lora_" in n}
+
+    assert lora_grads(VisionDeciderModel.load(ckpt)) == {False}
+    assert lora_grads(VisionDeciderModel.load(ckpt, trainable=True)) == {True}
+
+
 def test_text_requests_unchanged(engines):
     text, vision = engines
     req = SystemOneRequest(state=STATE, questions=QUESTIONS)

@@ -28,7 +28,7 @@ from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, Dataset
 
 from . import distributed
-from .data.collate import CollatorConfig, SystemOneCollator
+from .data.collate import KIND_IDS, CollatorConfig, SystemOneCollator
 from .data.format import Example, load_examples, split_examples
 from .data.sampling import LengthGroupedBatchSampler, example_length, padding_fraction
 from .modeling import StrandsDeciderConfig, StrandsDeciderModel
@@ -82,6 +82,14 @@ class TrainConfig:
     # drops the adapter and freezes the *base* torso, which would train the new head
     # against unadapted features and silently measure the wrong thing.
     init_from: str | None = None
+    # Continue training an existing checkpoint as it is: its adapter stays trainable and
+    # its trained head is kept (`init_from` instead freezes the torso under a fresh head).
+    # The stored calibration is reset to 1.0, since forward() applies it; recalibrate after.
+    continue_from: str | None = None
+    # Row kinds ("noul", "choice", "score") that get no frozen-KL term. The frozen torso's
+    # option-number reading is near chance on yes/no questions, so anchoring yes/no rows
+    # to it pulls their answers toward 0.5.
+    kl_frozen_skip_kinds: list[str] = field(default_factory=list)
 
     # optimisation
     epochs: int = 1
@@ -293,7 +301,24 @@ def train(cfg: TrainConfig) -> str:
     )
     if cfg.lora_targets:
         model_cfg.lora_targets = list(cfg.lora_targets)
-    if cfg.init_from:
+    if cfg.continue_from and cfg.init_from:
+        raise ValueError("set at most one of continue_from and init_from")
+    unknown = set(cfg.kl_frozen_skip_kinds) - set(KIND_IDS)
+    if unknown:
+        raise ValueError(f"unknown kl_frozen_skip_kinds: {sorted(unknown)}")
+    if cfg.continue_from:
+        print(f"[strands-decider] continuing {cfg.continue_from} (adapter and head trainable)")
+        model = StrandsDeciderModel.load(cfg.continue_from, attn_implementation=cfg.attn_implementation,
+                                         trainable=True)
+        if model.config.head_type != cfg.head_type:
+            raise ValueError(f"continue_from has head_type {model.config.head_type!r}, "
+                             f"the config asks for {cfg.head_type!r}")
+        model.config.temperature = 1.0
+        model.config.temperature_by_kind = {}
+        # The checkpoint records this run's settings, as a fresh model's config would.
+        model.config.kl_frozen_weight = cfg.kl_frozen_weight
+        model.config.max_length = cfg.max_length
+    elif cfg.init_from:
         from .modeling import SlotHead
 
         print(f"[strands-decider] loading torso + adapter from {cfg.init_from}")
@@ -447,7 +472,8 @@ def train(cfg: TrainConfig) -> str:
     slots = model.slot_token_ids()  # the rows frozen_slot_log_probs covers
     kl_slots = max(slots) + 1 if slots else 0
     if world > 1:  # each rank iterates its share of every step's rows instead
-        train_loader = distributed.StepSlices(train_loader, kl_slots, cfg.grad_accum, total_steps)
+        train_loader = distributed.StepSlices(train_loader, kl_slots, cfg.grad_accum, total_steps,
+                                              frozenset(cfg.kl_frozen_skip_kinds))
 
     refs = None
     if cfg.precompute_frozen_kl and cfg.kl_frozen_weight > 0:
@@ -497,6 +523,8 @@ def train(cfg: TrainConfig) -> str:
                     m, a = (part.micro, part.start) if world > 1 else (micro, 0)
                     ref_lp = refs[m, a:a + batch["labels"].numel()]
                     eligible = batch["n_slots"] <= kl_slots
+                for kind in cfg.kl_frozen_skip_kinds:
+                    eligible = eligible & (batch["kind_id"] != KIND_IDS[kind])
                 if ref_lp.numel() and bool(eligible.any()):
                     ref = ref_lp[eligible]
                     stu = out["log_probs"][eligible]
