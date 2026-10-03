@@ -44,7 +44,7 @@ from typing import Any
 import torch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from metrics import image_dependence, naturalbench_paired, summarise
+from metrics import score_runs
 
 from strands_decider.infer import _option_token_index
 from strands_decider.modeling import StrandsDeciderConfig, masked_log_softmax
@@ -321,29 +321,6 @@ def run_system(system: Any, items: list[dict[str, Any]], out: str) -> dict[str, 
     return res
 
 
-def score(all_res: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
-    out: dict[str, Any] = {}
-    for tag, rs in all_res.items():
-        by_bench: dict[str, list[dict[str, Any]]] = {}
-        for r in rs:
-            by_bench.setdefault(r["bench"], []).append(r)
-        out[tag] = {b: summarise(v) for b, v in by_bench.items()}
-        if by_bench.get("naturalbench"):
-            out[tag]["naturalbench"]["paired"] = naturalbench_paired(by_bench["naturalbench"])
-        ijb = by_bench.get("ijb_preview")
-        if ijb:
-            block = out[tag]["ijb_preview"]
-            block["exact_only"] = summarise([r for r in ijb if r.get("exact")])["all"]
-            per: dict[str, list[dict[str, Any]]] = {}
-            for r in ijb:
-                per.setdefault(r["dataset"], []).append(r)
-            block["by_dataset"] = {d: summarise(v)["all"] for d, v in sorted(per.items())}
-    for tag in list(all_res):
-        if not tag.endswith("-blind") and f"{tag}-blind" in all_res:
-            out[tag]["image_dependence"] = image_dependence(all_res[tag], all_res[f"{tag}-blind"])
-    return out
-
-
 def _versions() -> dict[str, Any]:
     import platform
 
@@ -388,7 +365,7 @@ def main() -> None:
             print(f"[vision-eval] {name} FAILED\n{errors[name]}", flush=True)
         with open(os.path.join(a.out, "summary.json"), "w") as fh:
             json.dump({"args": vars(a), "versions": _versions(), "errors": errors,
-                       "scores": score(all_res)}, fh, indent=2)
+                       "scores": score_runs(all_res)}, fh, indent=2)
     if errors:
         sys.exit(1)
 
