@@ -39,28 +39,33 @@ def main() -> None:
     ap.add_argument("--checkpoint", default=V19)
     ap.add_argument("--data-dir", default=os.path.join(os.path.dirname(__file__), "../../data/synthetic"))
     ap.add_argument("--out", required=True)
+    ap.add_argument("--device", default="cuda")
+    ap.add_argument("--limit", type=int, default=0, help="rows per file (0: all)")
     a = ap.parse_args()
     ck = a.checkpoint
     if ck == V19:
         from huggingface_hub import snapshot_download
         ck = snapshot_download(V19, revision=V19_REV)
-    model = VisionDeciderModel.load(ck).to("cuda").eval()
+    model = VisionDeciderModel.load(ck).to(a.device).eval()
+    dev = a.device
     temps = model.config.temperature_by_kind
     res = []
     for f in FILES:
         for i, line in enumerate(open(os.path.join(a.data_dir, f))):
+            if a.limit and i >= a.limit:
+                break
             ex = Example.from_dict(json.loads(line))
             prompt, rq = build_prompt(ex.state, ex.to_question())
             enc = model.tokenizer(prompt, return_offsets_mapping=True)
             if len(enc["input_ids"]) > model.config.max_length:
                 continue
             opt = _option_token_index(enc["offset_mapping"], rq.option_spans, len(prompt) - len(rq.text))
-            ids = torch.tensor([enc["input_ids"]], device="cuda")
+            ids = torch.tensor([enc["input_ids"]], device=dev)
             qwen_base(model.torso).rope_deltas = None
-            out = model(ids, torch.ones_like(ids), torch.tensor([rq.n_slots], device="cuda"),
-                        opt_idx=torch.tensor([opt], device="cuda"),
+            out = model(ids, torch.ones_like(ids), torch.tensor([rq.n_slots], device=dev),
+                        opt_idx=torch.tensor([opt], device=dev),
                         temperature=temps.get(ex.kind, model.config.temperature))
-            p = masked_log_softmax(out["logits"].float(), torch.tensor([rq.n_slots], device="cuda")).exp()[0]
+            p = masked_log_softmax(out["logits"].float(), torch.tensor([rq.n_slots], device=dev)).exp()[0]
             # slot k shows canonical option k (no shuffling): probs are in option order
             res.append({"id": f"{f}:{i}", "file": f, "kind": ex.kind, "gold": ex.label,
                         "probs": [float(x) for x in p[: rq.n_slots]]})
