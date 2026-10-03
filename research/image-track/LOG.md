@@ -149,3 +149,19 @@ generated_v16_eval, generated_v18_eval, adequacy_gen_eval; 899 rows). Smoke test
 
 Launch: `bash research/image-track/remote/bootstrap2.sh` (setup, fla, deterministic data
 rebuild — sha256 must match the hashes above — dedupe), then `remote/launch.sh`.
+
+## Host 3 (shared text-track 4x H100, vast 53993770) — I2 data rebuilt (2026-10-03 12:22Z)
+
+The account appears capped at 4 GPUs, so I2 runs on the text track's 4x H100 after its seeds, from a separate
+checkout (`/root/sdi`, `/root/iruns`; paths rewritten by sed on the host only) and the conda Python
+(transformers 5.18.0, peft 0.21.2; text track uses its own venv). causal-conv1d not installed.
+
+Rebuild with `remote/bootstrap2.sh` (M2W revision 1b4c6a8c…, 27 train shards). Row counts and task mix identical
+to host 2 (vqa 11,600 = 3,500 yes/no + 800 number + 1,500 other pairs; m2w 6,200 = 3,891 goal + 2,309 element;
+count 4,400; charts 7,667; docs 5,789; tabfact 2,484). Dedupe identical: 21,704 train vs 1,828 eval images,
+0 within Hamming 6, closest 8 (1), 10 (15); COCO overlap with POPE 0.
+
+sha256 vs the host-2 values above: charts, count, docs, tabfact **match**; **vqa (a7847c38…) and m2w (013bcdc7…)
+differ** from host 2 (02afc86f…, 37905fb5…). Host 2 is destroyed, so the byte difference cannot be inspected;
+same counts, mix and dedupe. I2 trains on the host-3 files; these hashes are the ones of record for I2:
+charts 1c915218…, count 09a27833…, docs eceece7a…, m2w 013bcdc7…, tabfact 7db5268e…, vqa a7847c38….
