@@ -91,6 +91,26 @@ def test_every_align_config_loads(path):
 
 
 @pytest.mark.parametrize("seed", [1, 2])
+def test_minicpm5_images_seeds_differ_only_in_seed_and_output_dir(seed):
+    from strands_decider.vision_train import VisionTrainConfig
+
+    rep, ref = (dataclasses.asdict(VisionTrainConfig.from_yaml(
+        os.path.join(ROOT, "configs", "vision", f"minicpm5-images{s}.yaml"))) for s in (f"-seed{seed}", ""))
+    assert _differing_keys(rep, ref) == {"seed", "output_dir"}
+    assert rep["seed"] == seed
+
+
+def test_minicpm5_images_is_v19_images_on_a_grafted_start():
+    """The v19-images recipe; only the start, the projector and the image-token estimate differ."""
+    from strands_decider.vision_train import VisionTrainConfig
+
+    rep, ref = (dataclasses.asdict(VisionTrainConfig.from_yaml(os.path.join(ROOT, "configs", "vision", f)))
+                for f in ("minicpm5-images.yaml", "v19-images.yaml"))
+    assert _differing_keys(rep, ref) == {"init_from", "init_revision", "projector_from",
+                                         "est_image_tokens", "output_dir"}
+
+
+@pytest.mark.parametrize("seed", [1, 2])
 def test_v19_images_seeds_differ_only_in_seed_and_output_dir(seed):
     from strands_decider.vision_train import VisionTrainConfig
 

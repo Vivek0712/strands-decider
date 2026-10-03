@@ -1,0 +1,50 @@
+# minicpm5-images: stage 2 of grafting eyes onto MiniCPM5-2B. configs/vision/v19-images.yaml's
+# recipe (the same rows, image-removed copies, text replay, losses and optimisation) on the v21
+# MiniCPM5 text checkpoint with the stage-1 projector (configs/align/minicpm5-align.yaml):
+# LoRA, head and projector train, SigLIP2 stays frozen. Exploratory, three seeds (this file,
+# -seed1, -seed2); training/recipe_minicpm_vision.sh train. `init_from` and `projector_from`
+# are local paths, set on the command line when they differ:
+#   python -m strands_decider.vision_train configs/vision/minicpm5-images.yaml \
+#       init_from=/path/to/v21-minicpm5 projector_from=checkpoints/minicpm5-align
+
+init_from: "checkpoints/v21-minicpm5"
+init_revision: null
+projector_from: "checkpoints/minicpm5-align"
+projector_lr: 0.00002   # LLaVA's projector rate once the decoder trains too
+
+data_root: "data/image/build"
+train_files: ["vqa.jsonl", "count.jsonl", "m2w.jsonl", "charts.jsonl", "docs.jsonl", "tabfact.jsonl"]
+dedupe_drop: "data/image/build/dedupe_drop.txt"
+# v19's committed text rows, as for v19-images (v21's own training rows include them)
+text_replay_files: ["data/synthetic/generated_v16.jsonl", "data/synthetic/generated_v18.jsonl",
+                    "data/synthetic/adequacy_gen.jsonl"]
+text_replay_n: 3000
+ablation_fraction: 0.15
+kl_frozen_weight: 0.3   # KL(frozen MiniCPM5 + projector || student), image in the prompt
+kl_only_weight: 1.0
+val_fraction: 0.03
+
+image_long_side: 0
+image_max_pixels: 400000   # then squashed to 384 x 384 by the SigLIP processor: 144 slots
+est_image_tokens: 150
+max_length: 4096
+shuffle_options: true
+ordinal_smoothing: 0.1
+
+epochs: 1
+lr: 0.00005             # LoRA
+head_lr: 0.0002
+weight_decay: 0.01
+warmup_ratio: 0.03
+max_grad_norm: 1.0
+micro_rows: 16
+micro_tokens: 12000
+rows_per_step: 32
+gradient_checkpointing: true
+workers: 8
+
+output_dir: "checkpoints/minicpm5-images"
+seed: 0
+log_every: 20
+eval_every: 400
+val_batches: 60

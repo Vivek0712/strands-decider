@@ -1,4 +1,5 @@
-"""Grafted eyes for a text-only torso (src/strands_decider/graft.py and graft_align.py), on the tiny SigLIP and Llama of tests/tiny_graft.py;
+"""Grafted eyes for a text-only torso (src/strands_decider/graft.py, graft_align.py, and
+vision_train.py with `projector_from`), on the tiny SigLIP and Llama of tests/tiny_graft.py;
 nothing is downloaded. The tests pin what the feature promises:
 
 * the projector's shapes, and that its pixel-unshuffle groups neighbouring patches;
@@ -9,7 +10,8 @@ nothing is downloaded. The tests pin what the feature promises:
 * the shared-prefix path over 1 and 2 images equals a plain full forward;
 * the window cuts the state text, never an image;
 * stage 1 lowers the caption loss and changes only the projector;
-* the server and evaluation load a grafted checkpoint;
+* stage 2 lowers the decision loss, moves the adapter, head and projector, never the
+  encoder, and saves a checkpoint the server and evaluation load;
 * a checkpoint saves and loads whole, projector included;
 * the caption builder and stage 1 refuse COCO val2014 images (POPE's).
 """
@@ -20,6 +22,7 @@ import base64
 import io
 import json
 import os
+import random
 import re
 import sys
 from dataclasses import replace
@@ -71,6 +74,7 @@ from strands_decider.vision import (  # noqa: E402
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "data", "image"))
 import captions  # noqa: E402
+import common  # noqa: E402
 
 STATE = "Help! My payouts have been failing for 3 days."
 QUESTIONS = {
@@ -377,6 +381,78 @@ def test_caption_rows_refuse_val2014(base, enc, tmp_path):
                              "source": "s", "source_id": "v"}) + "\n")
     with pytest.raises(ValueError, match="val2014"):
         load_rows(_align_cfg(tmp_path, base, enc))
+
+
+# ---- stage 2 -------------------------------------------------------------------------------------
+
+
+def _image_rows(root, n: int = 6) -> None:
+    rng = random.Random(0)
+    os.makedirs(root / "img", exist_ok=True)
+    rows = []
+    for k in range(n):
+        name = f"img/{k}.png"
+        Image.new("RGB", (64 + 16 * k, 48), (200 if k % 2 else 20, 90, 160)).save(root / name)
+        kw = dict(source="synthetic", images=[name], source_id=f"img-{k}")
+        rows.append(common.yesno(f"Is image {k} red?", k % 2 == 1, rng, task="red", **kw))
+        rows.append(common.row("choice", "Which colour?", [["red", ""], ["blue", ""]], 0 if k % 2 else 1,
+                               task="colour", **kw))
+    common.write(str(root / "rows.jsonl"), rows)
+    text = [{"kind": "noul", "state": f"Ticket {k}", "instructions": "Urgent?", "options": common.NOUL_DEFAULT,
+             "label": k % 2, "task": "text"} for k in range(4)]
+    common.write(str(root / "text.jsonl"), text)
+
+
+def test_stage2_lowers_the_loss_and_saves_a_servable_checkpoint(text_ckpt, stage1, tmp_path):
+    from safetensors.torch import load_file
+
+    from strands_decider.vision_train import (
+        ImageCollator,
+        VisionTrainConfig,
+        load_model,
+        row_losses,
+        train,
+    )
+
+    _image_rows(tmp_path)
+    cfg = VisionTrainConfig(init_from=text_ckpt, init_revision=None, projector_from=stage1,
+                            data_root=str(tmp_path), train_files=["rows.jsonl"],
+                            text_replay_files=[str(tmp_path / "text.jsonl")], text_replay_n=4,
+                            ablation_fraction=0.0, image_long_side=0, image_max_pixels=4096, workers=0,
+                            # every row in each of the 3 steps (3 epochs): the loss is the full-batch one
+                            epochs=3, rows_per_step=16, micro_rows=8, lr=3e-3, head_lr=3e-3,
+                            projector_lr=3e-3, warmup_ratio=0.0, log_every=1, eval_every=0,
+                            val_fraction=0.0, est_image_tokens=16, output_dir=str(tmp_path / "out"))
+    start = load_model(cfg)
+    assert not any(p.requires_grad for p in start.encoder.parameters())
+    trainable = {n.split(".")[0] for n, p in start.named_parameters() if p.requires_grad}
+    assert trainable == {"torso", "head", "projector"}
+
+    with open(tmp_path / "rows.jsonl", encoding="utf-8") as fh:
+        rows = [json.loads(line) for line in fh]
+
+    def loss(model):
+        model.eval()
+        batch = ImageCollator(model.tokenizer, model.image_prompt(), cfg, train=False)(rows)
+        assert "pixel_values" in batch and "image_grid_thw" not in batch
+        with torch.no_grad():
+            ce, _, _ = row_losses(model, batch, 0.0, 0.0)
+        return float(ce.mean())
+
+    before = loss(start)
+    out = train(cfg)
+    after_model = GraftedDeciderModel.load(out)
+    assert loss(after_model) < before
+    p0, p1 = load_projector_state(stage1), load_projector_state(out)
+    assert any(not torch.equal(p0[k], p1[k]) for k in p0)
+    l0 = load_file(os.path.join(text_ckpt, "lora", "adapter_model.safetensors"))
+    l1 = load_file(os.path.join(out, "lora", "adapter_model.safetensors"))
+    assert l0.keys() == l1.keys() and any(not torch.equal(l0[k], l1[k]) for k in l0)
+    h0, h1 = torch.load(os.path.join(text_ckpt, "slot_head.pt")), torch.load(os.path.join(out, "slot_head.pt"))
+    assert any(not torch.equal(h0[k], h1[k]) for k in h0)
+    with open(os.path.join(out, "history.json"), encoding="utf-8") as fh:
+        assert [h["step"] for h in json.load(fh) if "ce" in h] == [1, 2, 3]
+    assert is_grafted(out)
 
 
 # ---- serving and evaluation ------------------------------------------------------------------

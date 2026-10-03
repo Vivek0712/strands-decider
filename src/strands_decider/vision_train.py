@@ -23,9 +23,14 @@ server renders them (one collator draw per row: option order and phrasing), and 
 are decoded (`read_image`) and resized (`fit_image`) as the server does, then processed
 by the PIL image processor the engine pins.
 
-    python -m strands_decider.vision_train configs/vision/v19-images.yaml
+    python -m strands_decider.vision_train configs/vision/v19-images.yaml [key=value ...]
 
 Single process, one GPU: about 46 minutes for the recorded 1,404 steps on one H100.
+
+With `projector_from` set, the checkpoint is a text-only torso (MiniCPM5) given grafted
+eyes (graft.py): the stage-1 projector in that directory is loaded beside the text
+checkpoint, trains at `projector_lr`, and is saved with the adapter and head; the SigLIP
+encoder stays frozen. Everything else (rows, copies, losses) is the same recipe.
 """
 
 from __future__ import annotations
@@ -37,7 +42,7 @@ import random
 import sys
 import time
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import Any, cast
 
 import torch
 from torch.utils.data import DataLoader, Dataset
@@ -47,13 +52,13 @@ from .data.format import Example
 from .prompting import render_question
 from .train import YamlConfig, _build_optimizer, _lr_lambda
 from .vision import (
+    ImagePrompt,
+    QwenImages,
     VisionDeciderModel,
-    expand_image_tokens,
     fit_image,
-    image_tokens_for_grid,
+    load_vision_model,
     qwen_base,
     read_image,
-    render_image_state,
 )
 
 Row = dict[str, Any]
@@ -65,6 +70,10 @@ class VisionTrainConfig(YamlConfig):
     # the checkpoint to continue: a local directory, or a Hub repo at `init_revision`
     init_from: str = "StrandsAgents/strands-decider-2B-hobson-v19"
     init_revision: str | None = "bb282d786bc251fd4e3068de3ada9ddbb38127cd"
+    # A stage-1 projector directory (graft_align.py): grafts its encoder and projector onto
+    # `init_from`, a text checkpoint on a text-only torso. None: Qwen3.5's own tower.
+    projector_from: str | None = None
+    projector_lr: float = 2e-5
 
     # data: the builders' JSONL files under `data_root`, image paths relative to it
     data_root: str = "data/image/build"
@@ -195,8 +204,10 @@ class ImageCollator:
     """Rows -> one micro-batch: the image(s) inside <state>, then the question, rendered
     and labelled as SystemOneCollator renders a text row."""
 
-    def __init__(self, tokenizer: Any, processor: Any, cfg: VisionTrainConfig, *, train: bool):
-        self.tok, self.proc, self.cfg, self.train = tokenizer, processor, cfg, train
+    def __init__(self, tokenizer: Any, prompter: Any, cfg: VisionTrainConfig, *, train: bool):
+        if not isinstance(prompter, ImagePrompt):  # a bare Qwen processor, as before
+            prompter = QwenImages(prompter)
+        self.tok, self.prompter, self.cfg, self.train = tokenizer, prompter, cfg, train
         self.ccfg = CollatorConfig(max_length=cfg.max_length, num_slots=24, head_type="pointer",
                                    shuffle_options=cfg.shuffle_options,
                                    ordinal_smoothing=cfg.ordinal_smoothing, seed=0)
@@ -213,16 +224,14 @@ class ImageCollator:
         counts: list[int] = []
         out: dict[str, torch.Tensor] = {}
         if images:
-            mm = self.proc(images=images, return_tensors="pt")
-            counts = image_tokens_for_grid(mm["image_grid_thw"].tolist(), self.proc.merge_size)
-            out = {"pixel_values": mm["pixel_values"], "image_grid_thw": mm["image_grid_thw"]}
+            counts, out = self.prompter.process(images)
         ids, opts, labels, targets = [], [], [], []
         c = 0
         for r in rows:
             ex, n_img = Example.from_dict(r), len(r.get("images", []))
             order, question, label, target = base.draw(ex)
             rq = render_question(question, option_order=order)
-            prompt = expand_image_tokens(render_image_state(ex.state, n_img), counts[c : c + n_img]) + rq.text
+            prompt = self.prompter.state(ex.state, counts[c : c + n_img]) + rq.text
             c += n_img
             enc = self.tok(prompt, return_offsets_mapping=True)
             if len(enc["input_ids"]) > self.cfg.max_length:
@@ -264,10 +273,13 @@ class MicroBatches(Dataset):
 # ---- training ------------------------------------------------------------------------
 
 
+MM_KEYS = ("pixel_values", "image_grid_thw")  # what an image prompt's `process` may return
+
+
 def row_losses(model: VisionDeciderModel, batch: dict[str, torch.Tensor], kl_weight: float,
                kl_only_weight: float) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Per-row label loss and frozen-KL term (see the module docstring), and log probs."""
-    mm = {k: batch[k] for k in ("pixel_values", "image_grid_thw") if k in batch}
+    mm = {k: batch[k] for k in MM_KEYS if k in batch}
     out = model(batch["input_ids"], batch["attention_mask"], batch["n_slots"], opt_idx=batch["opt_idx"],
                 temperature=1.0, **mm)
     lp = out["log_probs"]
@@ -279,7 +291,7 @@ def row_losses(model: VisionDeciderModel, batch: dict[str, torch.Tensor], kl_wei
     ce = ce * batch["weights"]
     kl = torch.zeros_like(ce)
     if kl_weight > 0 or kl_only_weight > 0:
-        qwen_base(model.torso).rope_deltas = None  # positions of this batch, not the last
+        model.reset_positions()  # positions of this batch, not the last
         ref, eligible = model.frozen_slot_log_probs(batch["input_ids"], batch["attention_mask"],
                                                     batch["n_slots"], **mm)
         if ref.numel():
@@ -288,7 +300,7 @@ def row_losses(model: VisionDeciderModel, batch: dict[str, torch.Tensor], kl_wei
             p = ref.exp().masked_fill(~valid, 0.0)
             per_row = (p * (ref - lp).masked_fill(~valid, 0.0)).sum(-1) * eligible.float()
             kl = torch.where(batch["ablation"], kl_only_weight, kl_weight) * per_row
-    qwen_base(model.torso).rope_deltas = None
+    model.reset_positions()
     return ce, kl, lp
 
 
@@ -308,13 +320,21 @@ def evaluate(model: VisionDeciderModel, loader: DataLoader, device: str) -> dict
 
 
 def load_model(cfg: VisionTrainConfig) -> VisionDeciderModel:
-    """The checkpoint to continue, its adapter and head trainable, its vision tower frozen."""
+    """The checkpoint to continue, its adapter and head (and a grafted projector)
+    trainable, its vision tower or encoder frozen."""
     path = cfg.init_from
     if not os.path.isdir(path):
         from huggingface_hub import snapshot_download
 
         path = snapshot_download(path, revision=cfg.init_revision)
-    model = VisionDeciderModel.load(path, trainable=True)
+    model: VisionDeciderModel
+    if cfg.projector_from:
+        from .graft import GraftedDeciderModel
+
+        model = cast(VisionDeciderModel, GraftedDeciderModel.load(
+            path, projector_from=cfg.projector_from, trainable=True))
+    else:
+        model = load_vision_model(path, trainable=True)
     # Fitted on the checkpoint's own answers to images; stale once it trains on them.
     model.config.image_temperature_by_kind = {}
     if cfg.gradient_checkpointing:
@@ -342,9 +362,7 @@ def train(cfg: VisionTrainConfig) -> str:
                 "ablation_train": sum(bool(r.get("ablation")) for r in train_rows)}
     print(f"[vision-train] {json.dumps(manifest)}", flush=True)
 
-    from transformers import Qwen2VLImageProcessorPil
-
-    proc = Qwen2VLImageProcessorPil.from_pretrained(model.config.base_model)  # as VisionEngine pins it
+    proc = model.image_prompt()  # as VisionEngine pins it
     lengths = [est_length(r, cfg.est_image_tokens) for r in train_rows]
     batches = [b for e in range(cfg.epochs)
                for b in plan_batches(lengths, cfg.micro_rows, cfg.micro_tokens, cfg.seed * 100 + e)]
@@ -360,6 +378,11 @@ def train(cfg: VisionTrainConfig) -> str:
 
     optim = _build_optimizer(model, lr=cfg.lr, head_lr=cfg.head_lr, weight_decay=cfg.weight_decay)
     params = list(model.head.parameters()) + [p for p in model.torso.parameters() if p.requires_grad]
+    projector = getattr(model, "projector", None)
+    if projector is not None:  # a grafted model's projector: its own learning rate
+        optim.add_param_group({"params": list(projector.parameters()), "lr": cfg.projector_lr,
+                               "weight_decay": 0.0})
+        params += list(projector.parameters())
     warmup = max(1, int(total_steps * cfg.warmup_ratio))
     sched = torch.optim.lr_scheduler.LambdaLR(optim, lambda s: _lr_lambda(s, warmup, total_steps))
     print(f"[vision-train] {len(batches)} micro-batches, {total_steps} steps", flush=True)
@@ -408,10 +431,13 @@ def train(cfg: VisionTrainConfig) -> str:
 
 
 def main(argv: list[str] | None = None) -> None:
+    from .graft_align import parse_overrides
+
     args = sys.argv[1:] if argv is None else argv
-    if len(args) != 1:
-        raise SystemExit("usage: python -m strands_decider.vision_train CONFIG.yaml")
-    train(VisionTrainConfig.from_yaml(args[0]))
+    if not args:
+        raise SystemExit("usage: python -m strands_decider.vision_train CONFIG.yaml [key=value ...]")
+    cfg = VisionTrainConfig.from_yaml(args[0])
+    train(VisionTrainConfig(**{**asdict(cfg), **parse_overrides(args[1:])}))
 
 
 if __name__ == "__main__":
