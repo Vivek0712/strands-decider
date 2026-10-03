@@ -176,7 +176,10 @@ adapter and head, rather than a fresh head on a frozen torso as `init_from` does
 `kl_frozen_skip_kinds` (no frozen-KL term on the listed row kinds), with `recipe.sh
 teacher_yn` and `configs/experiments/v19-yn27b.yaml`. Image fine-tuning has its own trainer,
 `python -m strands_decider.vision_train`, driven end to end by `training/recipe_images.sh`
-with `configs/vision/v19-images.yaml`.
+with `configs/vision/v19-images.yaml`. A MiniCPM5 checkpoint, which has no vision tower,
+gets grafted eyes in two stages (`python -m strands_decider.graft_align`, then
+`vision_train` with `projector_from`), driven by `training/recipe_minicpm_vision.sh`
+([docs/vision.md](../docs/vision.md#a-torso-without-a-vision-tower-grafted-eyes-minicpm5)).
 
 The steps, each with its command, are in [steps.md](steps.md):
 [1. Build the corpora](steps.md#1-build-the-corpora),
