@@ -366,10 +366,12 @@ def main() -> None:
     ap.add_argument("--nb-local")
     ap.add_argument("--pope-local")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    ap.add_argument("--long-side", type=int, default=448, help="image long side for strands/qwen")
     ap.add_argument("--checkpoint", default=V19,
                     help="the strands system's checkpoint: v19 by default, or a fine-tuned one")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
+    _DeciderSystem.long_side = a.long_side
     items = (list(naturalbench(a.nb_groups, a.nb_local)) if a.nb_groups else []) + \
         (list(pope(a.pope, a.pope_local)) if a.pope else [])
     if a.ijb_jsonl:
