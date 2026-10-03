@@ -203,6 +203,25 @@ python evaluation/vision/compare.py reports/v19-images{,-seed1,-seed2}/eval --vs
   decoder (EXIF rotation applied), which the recorded runs did not; a COCO photo stored
   rotated trains upright.
 
+### The same image arm on a Gemma 4 E2B checkpoint (not run)
+
+[configs/vision/gemma4-e2b-images.yaml](../configs/vision/gemma4-e2b-images.yaml) (and `-seed1`,
+`-seed2`) is variant A unchanged on the same rows, starting from a TEXT Strands Decider on
+`google/gemma-4-E2B` (by default the bake-off's `checkpoints/bakeoff-gemma4-e2b`; `INIT_FROM`
+names another). Nothing about it has been measured yet.
+
+```bash
+for s in "" -seed1 -seed2; do
+  INIT_FROM=/path/to/gemma-text-ckpt CONFIG=configs/vision/gemma4-e2b-images$s.yaml \
+    training/recipe_images.sh train eval
+done
+CKPT=/path/to/gemma-text-ckpt OUT=reports/gemma-text-400k training/recipe_images.sh eval   # step 0
+python evaluation/vision/compare.py reports/gemma4-e2b-images{,-seed1,-seed2}/eval --vs reports/gemma-text-400k/eval
+```
+
+Gemma's processor sizes every image to its own 280-soft-token budget, so the 400,000-pixel
+budget changes the detail that reaches it, not the token count ([vision.md](vision.md#gemma-4-e2b-checkpoints)).
+
 The no-training rows: `evaluation/vision/run.py --systems strands --long-side 0 --max-pixels
 400000` (and the default 448 px) on the evaluation set, the same with `--nb-start 300
 --nb-groups 300 --pope 0 --no-blind` for the held-out groups, then `evaluation/vision/temps.py

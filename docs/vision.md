@@ -1,6 +1,7 @@
 # Images
 
-Strands Decider (v19) answers questions about images when it is loaded with `--vision`.
+Strands Decider (v19) answers questions about images when it is loaded with `--vision`
+(so does a checkpoint on Gemma 4 E2B; see [Gemma 4 E2B checkpoints](#gemma-4-e2b-checkpoints)).
 No weights change: the published checkpoint is used as is, and the images are read by the
 vision tower that already ships inside Qwen3.5-2B-Base. Text-only requests to a vision
 server get the same answers as from a text server.
@@ -87,6 +88,52 @@ Checks (`tests/test_vision.py`, offline, on a tiny random-weight Qwen3.5 with a 
 one and two images the shared-prefix path matches a plain full forward to under 1e-5; no
 position state leaks into the next request; the window and decoding rules above. Each
 test fails when the fix it pins is removed.
+
+## Gemma 4 E2B checkpoints
+
+A Strands Decider trained on `google/gemma-4-E2B` (the bake-off's
+[configs/experiments/bakeoff/gemma4-e2b.yaml](../configs/experiments/bakeoff/gemma4-e2b.yaml), or
+one image-trained from it) loads with `--vision` the same way; the family is read from the
+checkpoint's `base_model`:
+
+```bash
+strands-decider serve checkpoints/bakeoff-gemma4-e2b --vision --port 8000
+```
+
+- **Torso.** `Gemma4ForConditionalGeneration(...).model` at the checkpoint's pinned
+  `base_model_revision`, built without its audio tower (`audio_config` unset, so the
+  checkpoint's audio weights are never read): the vision encoder (16 layers, d 768), its
+  projection into the decoder (`embed_vision`), both frozen, and the same 35-layer decoder.
+  The text checkpoint's adapter is remapped from `layers.N...` to `language_model.layers.N...`
+  exactly as for Qwen, onto the same modules (the last 20 layers share keys and values and
+  have no `k_proj` / `v_proj`). Text-only requests get the text server's answers.
+- **Images in the prompt.** `<|image>`, then one `<|image|>` per soft token, then `<image|>`,
+  inside `<state>` before the text, as Qwen's placeholders are. The count is the processor's
+  `num_soft_tokens_per_image`: the image is resized (aspect kept, up or down) to at most
+  `max_soft_tokens` x 9 patches of 16 px, and every 3 x 3 patches pool to one token. E2B ships
+  `max_soft_tokens: 280`, so an image takes 256-280 tokens whatever its size (about 645,000
+  pixels); the server's 448 px cap or pixel budget is applied first, and only changes how much
+  detail survives into that resize, not the token count.
+- **Positions.** Gemma 4 uses 1-D RoPE (one position per token, image tokens included), so
+  the default positions are already right for a question suffix after the cached image
+  prefix, and nothing is left on the module between requests. E2B attends causally to image
+  tokens (`use_bidirectional_attention` is unset); the image path still passes
+  `mm_token_type_ids`, which a Gemma 4 with bidirectional image attention would need.
+- **Pixels.** Pinned to `Gemma4ImageProcessorPil`, read from the base's `processor_config.json`.
+- **Readout.** The frozen KL reference reads the LM's option-number logits soft-capped by
+  `final_logit_softcapping` (30), as the text torso does; on the multimodal model that value
+  sits on the text config.
+
+Checks (`tests/test_vision_gemma.py`, offline, on a tiny random-weight
+`Gemma4ForConditionalGeneration` with sliding, full and KV-shared layers, a vision and an
+audio tower and a real `GemmaTokenizer`): the torso's weights are the checkpoint's and no
+audio weight is loaded; LoRA reaches exactly the text checkpoint's modules and the adapter is
+the text checkpoint's; text requests match the text engine; placeholder counts are what the
+vision tower emits; over one and two images (prefixes far past the sliding window, forked
+across three questions) the shared-prefix path matches a full forward to under 1e-5; the KL
+reference with an image is the LM's own reading; three steps of image training lower the
+loss; a checkpoint round-trips; `run.py`, `text_check.py` and `serve --vision` run on it. No
+real Gemma 4 weights were run: nothing here measures how well it answers over images.
 
 ## How well it does
 
