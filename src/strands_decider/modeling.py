@@ -70,6 +70,9 @@ class StrandsDeciderConfig:
     # different accuracies, so a temperature good for one over-softens another.
     temperature: float = 1.0
     temperature_by_kind: dict[str, float] = field(default_factory=dict)
+    # Per-kind temperatures for questions asked over images (vision.VisionEngine). Fitted
+    # on held-out image items; kinds missing here fall back to temperature_by_kind.
+    image_temperature_by_kind: dict[str, float] = field(default_factory=dict)
     # Mirrors the training-time collator setting. Inference needs it to correct the
     # variance floor that smoothing imposes on score confidence (see schema.py).
     ordinal_smoothing: float = 0.0

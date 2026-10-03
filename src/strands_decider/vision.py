@@ -147,13 +147,23 @@ def decode_image(data: str, max_pixels: int = 4096 * 4096) -> Image.Image:
     return fit_image(img, 0)
 
 
-def fit_image(img: Image.Image, long_side: int) -> Image.Image:
-    """RGB, scaled down (never up) so the longer side is at most `long_side` (0: as is)."""
+def fit_image(img: Image.Image, long_side: int, max_pixels: int = 0) -> Image.Image:
+    """RGB, scaled down (never up) so the longer side is at most `long_side` and the area
+    at most `max_pixels`, keeping the aspect ratio (0 disables either bound).
+
+    A pixel budget gives every image about the same token count whatever its shape: a
+    wide screenshot keeps more of its width than a long-side cap of the same cost
+    allows, and a square photo is not cut further than it needs to be.
+    """
     img = img.convert("RGB")
     w, h = img.size
+    s, rnd = 1.0, round  # the long-side cap rounds, as it always has
     if long_side and max(w, h) > long_side:
         s = long_side / max(w, h)
-        img = img.resize((max(1, round(w * s)), max(1, round(h * s))), _pil().BICUBIC)
+    if max_pixels and w * h * s * s > max_pixels:
+        s, rnd = (max_pixels / (w * h)) ** 0.5, int  # floor: the area stays within budget
+    if s < 1.0:
+        img = img.resize((max(1, rnd(w * s)), max(1, rnd(h * s))), _pil().BICUBIC)
     return img
 
 
@@ -379,6 +389,8 @@ class VisionEngineConfig(EngineConfig):
     # Longest image side after resizing. Fixed per deployment so the token budget is
     # predictable: 448 px square is 196 tokens (patch 16, merge 2).
     image_long_side: int = 448
+    # Area cap per image after the long-side cap (0: none). 400_000 is ~390 tokens.
+    image_max_pixels: int = 0
     max_images: int = 4
     # Refused before decoding: 4096 x 4096 covers a 12 MP phone photo and bounds memory.
     max_image_pixels: int = 4096 * 4096
@@ -422,7 +434,8 @@ class VisionEngine(SystemOneEngine):
             return super().evaluate(request)
         if len(request.images) > self.vcfg.max_images:
             raise ValueError(f"{len(request.images)} images; this server takes at most {self.vcfg.max_images}")
-        images = [fit_image(decode_image(b, self.vcfg.max_image_pixels), self.vcfg.image_long_side)
+        images = [fit_image(decode_image(b, self.vcfg.max_image_pixels),
+                            self.vcfg.image_long_side, self.vcfg.image_max_pixels)
                   for b in request.images]
         names = list(request.questions)
         rendered = [render_question(request.questions[n]) for n in names]
@@ -445,6 +458,13 @@ class VisionEngine(SystemOneEngine):
             model=self.cfg.model_name, answers=answers,
             usage=Usage(input_tokens=total, output_tokens=len(names)),
         )
+
+    def _image_temperatures(self, kinds: list[str]) -> torch.Tensor:
+        """Image questions use `image_temperature_by_kind` where fitted, else the text ones."""
+        image_t = getattr(self.model.config, "image_temperature_by_kind", None) or {}
+        text_t = self._temperatures(kinds)
+        return torch.tensor([float(image_t.get(k, float(t))) for k, t in zip(kinds, text_t.tolist(), strict=True)],
+                            device=self.device, dtype=torch.float32)
 
     def ask_images(
         self, state: Content, questions: dict[str, Question], images: Sequence[str]
@@ -535,7 +555,7 @@ class VisionEngine(SystemOneEngine):
         options = gather_options(hidden, self._option_idx(rendered, 0)).to(torch.float32)
         head: Any = self.model.head
         logits = apply_temperature(head(pooled, options),
-                                   self._temperatures([rq.kind for rq in rendered]))
+                                   self._image_temperatures([rq.kind for rq in rendered]))
         probs = masked_log_softmax(logits, torch.tensor([rq.n_slots for rq in rendered], device=self.device))
         return probs.exp(), n + int(suffix_mask.sum().item())
 
@@ -546,12 +566,13 @@ def load_vision_engine(
     *,
     attn_implementation: str | None = None,
     image_long_side: int = 448,
+    image_max_pixels: int = 0,
 ) -> VisionEngine:
     """A vision engine configured as `create_app` configures a text one (device, prefix
     cache, `strict_window`, `max_batch`, model name), plus the image settings."""
     base = config or EngineConfig()
     names = {f.name for f in fields(EngineConfig)}
     cfg = VisionEngineConfig(**{k: v for k, v in asdict(base).items() if k in names},
-                             image_long_side=image_long_side)
+                             image_long_side=image_long_side, image_max_pixels=image_max_pixels)
     model = VisionDeciderModel.load(checkpoint, attn_implementation=attn_implementation)
     return VisionEngine(model, cfg)

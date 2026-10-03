@@ -106,9 +106,11 @@ def _mc(question: str) -> tuple[str, list[tuple[str, str]]]:
     return stem.strip(), opts
 
 
-def naturalbench(n_groups: int, local: str | None) -> Iterator[dict[str, Any]]:
+def naturalbench(n_groups: int, local: str | None, start: int = 0) -> Iterator[dict[str, Any]]:
     # Question k on image j -> column Image_j_Question_k (a fixed pattern in every group).
-    df = _parquet(NB_REPO, NB_FILE, NB_REV, local).head(n_groups)
+    # `start` skips groups: the evaluation set is the first 300, so `start=300` gives
+    # held-out groups for fitting temperatures.
+    df = _parquet(NB_REPO, NB_FILE, NB_REV, local).iloc[start : start + n_groups]
     for _, row in df.iterrows():
         imgs = [row["Image_0"]["bytes"], row["Image_1"]["bytes"]]
         for k in (0, 1):
@@ -167,6 +169,7 @@ class _DeciderSystem:
 
     model: VisionDeciderModel
     long_side = 448
+    max_pixels = 0
     device = "cpu"
 
     def __init__(self, base: str) -> None:
@@ -184,7 +187,7 @@ class _DeciderSystem:
         counts: list[int] = []
         n_img = 0 if blind else 1
         if n_img:
-            out = self.proc(images=[fit_image(_pil(it["image"]), self.long_side)], return_tensors="pt")
+            out = self.proc(images=[fit_image(_pil(it["image"]), self.long_side, self.max_pixels)], return_tensors="pt")
             counts = image_tokens_for_grid(out["image_grid_thw"].tolist(), self.proc.merge_size)
             mm = {"pixel_values": out["pixel_values"], "image_grid_thw": out["image_grid_thw"]}
         text = expand_image_tokens(render_image_state("", n_img), counts) + rq.text
@@ -203,6 +206,7 @@ class _DeciderSystem:
 
 class Strands(_DeciderSystem):
     name = "strands-v19"
+    override_temps: dict[str, float] = {}  # --temps: per-kind temperatures for this run
 
     def __init__(self, checkpoint: str = V19, device: str = "cpu") -> None:
         from huggingface_hub import snapshot_download
@@ -213,7 +217,10 @@ class Strands(_DeciderSystem):
         self.model = VisionDeciderModel.load(checkpoint).to(torch.float32).to(device).eval()
         super().__init__(self.model.config.base_model)
         cfg = self.model.config
-        self.temps = dict(cfg.temperature_by_kind)
+        # Image questions take the image temperatures; the image-removed pass is a text-only
+        # request, which the server answers with the text temperatures.
+        self.text_temps = dict(cfg.temperature_by_kind)
+        self.temps = {**cfg.temperature_by_kind, **cfg.image_temperature_by_kind, **self.override_temps}
         self.t_default = cfg.temperature
 
     def _question(self, it: dict[str, Any]) -> Question:
@@ -225,7 +232,8 @@ class Strands(_DeciderSystem):
     def probs(self, it: dict[str, Any], blind: bool) -> list[float]:
         rq, ids, opt, mm = self._inputs(it, blind)
         out = self.model(ids, torch.ones_like(ids), torch.tensor([rq.n_slots], device=self.device), opt_idx=opt,
-                         temperature=self.temps.get(it["kind"], self.t_default), **mm)
+                         temperature=(self.text_temps if blind else self.temps).get(it["kind"], self.t_default),
+                         **mm)
         p = masked_log_softmax(out["logits"].float().cpu(), torch.tensor([rq.n_slots])).exp()[0]
         return [float(p[s]) for s in self._gold_slot(rq, it)]
 
@@ -295,9 +303,10 @@ class Mapika:
 # ---- driver ------------------------------------------------------------------------------
 
 
-def run_system(system: Any, items: list[dict[str, Any]], out: str) -> dict[str, list[dict[str, Any]]]:
+def run_system(system: Any, items: list[dict[str, Any]], out: str,
+               blind_modes: tuple[bool, ...] = (False, True)) -> dict[str, list[dict[str, Any]]]:
     res: dict[str, list[dict[str, Any]]] = {}
-    for blind in (False, True):
+    for blind in blind_modes:
         tag = f"{system.name}{'-blind' if blind else ''}"
         path = os.path.join(out, f"{tag}.jsonl")
         done: dict[str, dict[str, Any]] = {}
@@ -367,12 +376,22 @@ def main() -> None:
     ap.add_argument("--pope-local")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--long-side", type=int, default=448, help="image long side for strands/qwen")
+    ap.add_argument("--max-pixels", type=int, default=0,
+                    help="pixel budget per image for strands/qwen, aspect kept, never upscaled (0: none)")
+    ap.add_argument("--nb-start", type=int, default=0,
+                    help="first NaturalBench group (300: held-out groups for fitting temperatures)")
+    ap.add_argument("--temps", default="",
+                    help='JSON per-kind temperatures for the strands system, e.g. {"noul": 1.1}')
+    ap.add_argument("--no-blind", action="store_true", help="skip the image-removed pass")
     ap.add_argument("--checkpoint", default=V19,
                     help="the strands system's checkpoint: v19 by default, or a fine-tuned one")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     _DeciderSystem.long_side = a.long_side
-    items = (list(naturalbench(a.nb_groups, a.nb_local)) if a.nb_groups else []) + \
+    _DeciderSystem.max_pixels = a.max_pixels
+    if a.temps:
+        Strands.override_temps = {k: float(v) for k, v in json.loads(a.temps).items()}
+    items = (list(naturalbench(a.nb_groups, a.nb_local, a.nb_start)) if a.nb_groups else []) + \
         (list(pope(a.pope, a.pope_local)) if a.pope else [])
     if a.ijb_jsonl:
         items += list(image_jevbench(a.ijb_jsonl))
@@ -384,7 +403,8 @@ def main() -> None:
     errors: dict[str, str] = {}
     for name in a.systems.split(","):
         try:
-            all_res.update(run_system(systems[name](), items, a.out))
+            all_res.update(run_system(systems[name](), items, a.out,
+                                      (False,) if a.no_blind else (False, True)))
         except Exception:
             errors[name] = traceback.format_exc()
             print(f"[vision-eval] {name} FAILED\n{errors[name]}", flush=True)
