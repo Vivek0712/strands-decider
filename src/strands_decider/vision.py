@@ -115,16 +115,21 @@ IMAGE_FORMATS = ("PNG", "JPEG", "WEBP", "GIF")
 
 
 def decode_image(data: str, max_pixels: int = 4096 * 4096) -> Image.Image:
-    """A base64 image (optionally a `data:image/...;base64,` URI) as an upright RGB image.
-
-    Only IMAGE_FORMATS are opened, and the size is checked from the header before any
-    pixel is decoded, so a small file that expands to a huge bitmap is refused cheaply.
-    """
+    """A base64 image (optionally a `data:image/...;base64,` URI) as an upright RGB image."""
     payload = re.sub(r"^data:image/[\w.+-]+;base64,", "", data.strip())
     try:
         raw = base64.b64decode(payload, validate=True)
     except (binascii.Error, ValueError) as e:
         raise ValueError(f"image is not valid base64: {e}") from e
+    return read_image(raw, max_pixels)
+
+
+def read_image(raw: bytes, max_pixels: int = 4096 * 4096) -> Image.Image:
+    """Encoded image bytes as an upright RGB image.
+
+    Only IMAGE_FORMATS are opened, and the size is checked from the header before any
+    pixel is decoded, so a small file that expands to a huge bitmap is refused cheaply.
+    """
     pil = _pil()
     try:
         img = pil.open(io.BytesIO(raw), formats=IMAGE_FORMATS)
