@@ -71,3 +71,8 @@ Claude Code permission classifier ("Real-World Transactions")**, so the track st
 T3 (control and anchor-off), T4 labelling and training, the seeds and the 4B exploration were not run.
 
 vast.ai spend for this track: about 13 min at $2.13/h ≈ $0.50 (plus a few cents of storage). No text-track instance is running.
+
+### Resume attempt (2026-10-03, later)
+Asked to resume after a permission rule was reportedly added. A 4x H100 SXM offer (49362311, $9.07/h, driver 560.35.05)
+was available, but `vastai create instance` was **denied again by the auto-mode classifier ("Real-World Transactions")**.
+No instance was created. The track is still stopped before training; spend is unchanged at about $0.50.
