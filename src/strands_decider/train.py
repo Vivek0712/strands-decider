@@ -21,7 +21,7 @@ import os
 import random
 import time
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import Any, TypeVar
 
 import torch
 from torch.nn.utils.rnn import pad_sequence
@@ -33,9 +33,27 @@ from .data.format import Example, load_examples, split_examples
 from .data.sampling import LengthGroupedBatchSampler, example_length, padding_fraction
 from .modeling import StrandsDeciderConfig, StrandsDeciderModel
 
+C = TypeVar("C", bound="YamlConfig")
+
+
+class YamlConfig:
+    """A dataclass config read from YAML, refusing keys it does not define."""
+
+    @classmethod
+    def from_yaml(cls: type[C], path: str) -> C:
+        import yaml
+
+        with open(path, encoding="utf-8") as fh:
+            raw = yaml.safe_load(fh) or {}
+        known = set(getattr(cls, "__dataclass_fields__", {}))
+        unknown = set(raw) - known
+        if unknown:
+            raise ValueError(f"unknown config keys: {sorted(unknown)}")
+        return cls(**raw)
+
 
 @dataclass
-class TrainConfig:
+class TrainConfig(YamlConfig):
     # data
     train_files: list[str] = field(default_factory=list)
     val_files: list[str] = field(default_factory=list)
@@ -127,18 +145,6 @@ class TrainConfig:
     # Same numbers up to bf16 batch-shape rounding. Needs group_by_length.
     precompute_frozen_kl: bool = False
 
-    @classmethod
-    def from_yaml(cls, path: str) -> TrainConfig:
-        import yaml
-
-        with open(path, encoding="utf-8") as fh:
-            raw = yaml.safe_load(fh) or {}
-        known = {f for f in cls.__dataclass_fields__}
-        unknown = set(raw) - known
-        if unknown:
-            raise ValueError(f"unknown config keys: {sorted(unknown)}")
-        return cls(**raw)
-
 
 def _random_batches(n: int, cfg: TrainConfig) -> list[list[int]]:
     """What shuffle=True would have produced, for reporting the padding saved."""
@@ -159,7 +165,8 @@ class ExampleDataset(Dataset):
         return self.examples[idx]
 
 
-def _build_optimizer(model: StrandsDeciderModel, cfg: TrainConfig) -> torch.optim.Optimizer:
+def _build_optimizer(model: StrandsDeciderModel, *, lr: float, head_lr: float,
+                     weight_decay: float) -> torch.optim.Optimizer:
     """Two parameter groups: a fast head and a slow adapter.
 
     Also excludes norms and biases from weight decay, which otherwise shrinks the
@@ -177,11 +184,11 @@ def _build_optimizer(model: StrandsDeciderModel, cfg: TrainConfig) -> torch.opti
             torso_params.append(p)
 
     groups: list[dict[str, Any]] = [
-        {"params": head_decay, "lr": cfg.head_lr, "weight_decay": cfg.weight_decay},
-        {"params": head_no_decay, "lr": cfg.head_lr, "weight_decay": 0.0},
+        {"params": head_decay, "lr": head_lr, "weight_decay": weight_decay},
+        {"params": head_no_decay, "lr": head_lr, "weight_decay": 0.0},
     ]
     if torso_params:
-        groups.append({"params": torso_params, "lr": cfg.lr, "weight_decay": 0.0})
+        groups.append({"params": torso_params, "lr": lr, "weight_decay": 0.0})
     groups = [g for g in groups if g["params"]]
     return torch.optim.AdamW(groups, betas=(0.9, 0.95), eps=1e-8)
 
@@ -460,7 +467,7 @@ def train(cfg: TrainConfig) -> str:
     total_steps = cfg.max_steps or steps_per_epoch * cfg.epochs
     warmup = max(1, int(total_steps * cfg.warmup_ratio))
 
-    optim = _build_optimizer(model, cfg)
+    optim = _build_optimizer(model, lr=cfg.lr, head_lr=cfg.head_lr, weight_decay=cfg.weight_decay)
     sched = torch.optim.lr_scheduler.LambdaLR(
         optim, lambda s: _lr_lambda(s, warmup, total_steps)
     )
