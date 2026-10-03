@@ -113,3 +113,16 @@ No instance was created. The track is still stopped before training; spend is un
 Read: the 27B teacher is what moves yes/no decisiveness (band 48 → 37); dropping the anchor adds a little (→ 35).
 More training alone (t3-control) helps choice, barely moves yes/no. Single seed on 74 yes/no items: differences of
 a few items are within noise, hence seeds 1 and 2 of t4 and t34 (launched 12:19Z, GPU0-3). Exploratory, not confirmatory.
+
+### Run 3 seeds (seeds 1, 2 of the two best arms; launched 12:19Z, finished 13:15–13:49Z)
+
+| arm | seed | n_correct | proxy I | noul competence | yes/no in band | yes/no right | Brier | ECE |
+|---|---|---|---|---|---|---|---|---|
+| t4-teacher27b | 0 / 1 / 2 | 171 / 170 / 169 | 39.4 / 31.8 / 32.1 | −13.5 / −32.4 / −32.4 | 37 / 45 / 46 | 52 / 55 / 53 | 0.352 / 0.337 / 0.365 | 0.052 / 0.042 / 0.042 |
+| t34-combined | 0 / 1 / 2 | 169 / 171 / 171 | 40.6 / 37.4 / 42.3 | −8.1 / −24.3 / −2.7 | 35 / 44 / 31 | 52 / 54 / 54 | 0.349 / 0.332 / 0.363 | 0.044 / 0.062 / 0.052 |
+
+Means (3 seeds): t4 proxy I 34.4 (range 31.8–39.4), band 42.7; **t34 proxy I 40.1 (37.4–42.3), band 36.7**; v19 32.1, band 48.
+Read: T4 alone is not reliably better than v19; its seed 0 was a lucky draw. T3+T4 (27B teacher + no frozen-KL
+on yes/no) beats v19 on every seed (+5.3 to +10.2 proxy I, 4 to 17 fewer yes/no answers in the band), Brier and ECE
+in v19's range. The effect is real but modest: about half the yes/no answers are still in the abstention band, and the
+proxy I stays far below the best 2B entries. Exploratory, 231 public tasks, local v1.5 proxy, not an official score.
