@@ -17,7 +17,8 @@ config's `train_files` in order: the output is that config's `teacher_file`.
         --base data/replay_v14_multistep.jsonl --out data/teacher_yn_qwen35-27b.jsonl
 
 On N GPUs, run `label` once per GPU with `--num-shards N --shard-index i`, then once with
-`--merge` (data/shards.py), as for data/teacher.py.
+`--merge` (data/shards.py), as for data/teacher.py. `label --engine vllm` reads the same
+distributions through vLLM (teacher.label_vllm) on one GPU, unsharded.
 """
 from __future__ import annotations
 
@@ -76,6 +77,8 @@ def agree(files: list[str], raw: dict[int, list[float]]) -> tuple[dict[int, list
 
 def _label(args: argparse.Namespace, ap: argparse.ArgumentParser) -> None:
     sharded = shards.sharded(ap, args)
+    if args.engine == "vllm" and args.num_shards > 1:
+        ap.error("--engine vllm runs as one process; it does not shard")
     gidx, examples = select(args.train_files, args.sources)
     out = shards.path(args.out, args.shard_index, args.num_shards) if sharded else args.out
     done: dict[int, list[float]] = {}  # by concatenation index; rerunning resumes
@@ -85,17 +88,21 @@ def _label(args: argparse.Namespace, ap: argparse.ArgumentParser) -> None:
         done = shards.read(out)
         print(f"resuming: {len(done):,} rows already labelled")
     if not args.merge:
-        print(f"labelling {len(examples):,} yes/no rows of {', '.join(args.sources)}")
-        model, tok = teacher.load(args.model, args.revision)
+        print(f"labelling {len(examples):,} yes/no rows of {', '.join(args.sources)} ({args.engine})")
+        skip = {j for j, i in enumerate(gidx) if i in done}
         t0 = time.time()
         with open(out, "a", encoding="utf-8") as fh:
             def sink(j: int, p: list[float]) -> None:
                 fh.write(json.dumps({"i": gidx[j], "probs": [round(x, 6) for x in p]}) + "\n")
                 fh.flush()
                 done[gidx[j]] = p
-            teacher.label(model, tok, examples, max_batch_tokens=args.max_batch_tokens,
-                          max_batch=args.max_batch, skip={j for j, i in enumerate(gidx) if i in done},
-                          sink=sink, num_shards=args.num_shards, shard_index=args.shard_index or 0)
+            if args.engine == "vllm":
+                teacher.label_vllm(args.model, args.revision, examples, skip=skip, sink=sink)
+            else:
+                model, tok = teacher.load(args.model, args.revision)
+                teacher.label(model, tok, examples, max_batch_tokens=args.max_batch_tokens,
+                              max_batch=args.max_batch, skip=skip, sink=sink,
+                              num_shards=args.num_shards, shard_index=args.shard_index or 0)
         print(f"labelled in {(time.time() - t0) / 60:.1f} min")
     with open(out, "w", encoding="utf-8") as fh:  # in row order, however many resumes it took
         for i in sorted(done):
@@ -128,6 +135,8 @@ def main(argv: list[str] | None = None) -> None:
     lb.add_argument("--revision", default=REVISION)
     lb.add_argument("--max-batch-tokens", type=int, default=32000)
     lb.add_argument("--max-batch", type=int, default=128)
+    lb.add_argument("--engine", choices=("hf", "vllm"), default="hf",
+                    help="hf: data/teacher.py's batched forward; vllm: teacher.label_vllm")
     shards.add_args(lb)
     bd = sub.add_parser("build", help="keep the rows that agree with gold, over a base teacher file")
     bd.add_argument("--raw", required=True)
