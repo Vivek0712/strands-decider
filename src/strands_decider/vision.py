@@ -36,6 +36,7 @@ from .modeling import (
     StrandsDeciderConfig,
     StrandsDeciderModel,
     apply_temperature,
+    base_revision,
     checkpoint_dir,
     config_path,
     gather_options,
@@ -133,13 +134,15 @@ def decode_image(data: str, max_pixels: int = 4096 * 4096) -> Image.Image:
     w, h = img.size
     if w * h > max_pixels:
         raise ValueError(f"image is {w}x{h}; at most {max_pixels:,} pixels are accepted")
-    try:
-        img.load()
-    except Exception as e:
-        raise ValueError(f"image could not be decoded: {e}") from e
     from PIL import ImageOps
 
-    img = ImageOps.exif_transpose(img)  # phone photos store their rotation in EXIF
+    try:
+        img.load()
+        # Phone photos store their rotation in EXIF. A malformed EXIF block raises
+        # SyntaxError or struct.error here, which would otherwise surface as HTTP 500.
+        img = ImageOps.exif_transpose(img)
+    except Exception as e:
+        raise ValueError(f"image could not be decoded: {e}") from e
     if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
         rgba = img.convert("RGBA")
         white = pil.new("RGBA", rgba.size, (255, 255, 255, 255))
@@ -215,12 +218,17 @@ class VisionDeciderModel(StrandsDeciderModel):
         _check_transformers()
         import transformers
 
-        base_cfg = transformers.AutoConfig.from_pretrained(config.base_model)
+        base_cfg = transformers.AutoConfig.from_pretrained(
+            config.base_model, revision=config.base_revision
+        )
         if base_cfg.model_type != "qwen3_5":
             raise ValueError(
                 f"image input needs a multimodal qwen3_5 checkpoint, got {base_cfg.model_type!r}"
             )
-        kwargs: dict[str, Any] = {"dtype": getattr(torch, config.torch_dtype)}
+        kwargs: dict[str, Any] = {
+            "dtype": getattr(torch, config.torch_dtype),
+            "revision": config.base_revision,
+        }
         if device_map:
             kwargs["device_map"] = device_map
         if attn_implementation:
@@ -340,6 +348,7 @@ class VisionDeciderModel(StrandsDeciderModel):
 
         path = checkpoint_dir(path)
         config = StrandsDeciderConfig.from_json(config_path(path))
+        config.base_revision = base_revision(path, config)
         if config.head_type != "pointer":
             raise ValueError("image input needs a pointer-head checkpoint")
         lora_file = os.path.join(path, "lora", "adapter_model.safetensors")
@@ -404,7 +413,9 @@ class VisionEngine(SystemOneEngine):
             # backend gives the same answers everywhere, and is what every result was measured on.
             from transformers import Qwen2VLImageProcessorPil
 
-            image_processor = Qwen2VLImageProcessorPil.from_pretrained(model.config.base_model)
+            image_processor = Qwen2VLImageProcessorPil.from_pretrained(
+                model.config.base_model, revision=model.config.base_revision
+            )
         self.image_processor = image_processor
 
     def _reset_positions(self) -> None:

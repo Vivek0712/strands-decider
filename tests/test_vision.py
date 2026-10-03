@@ -199,6 +199,10 @@ def test_decode_rotation_and_transparency():
     assert decode_image(_png(Image.new("RGB", (40, 20)), "JPEG", exif=exif)).size == (20, 40)
     clear = Image.new("RGBA", (4, 4), (0, 0, 0, 0))
     assert decode_image(_png(clear)).getpixel((0, 0)) == (255, 255, 255)
+    # Malformed EXIF is a caller error (422), not a server error.
+    for fmt in ("PNG", "WEBP"):
+        with pytest.raises(ValueError, match="could not be decoded"):
+            decode_image(_png(Image.new("RGB", (8, 8)), fmt, exif=b"garbage!"))
 
 
 def test_processor_is_pinned_to_pil(engines):
