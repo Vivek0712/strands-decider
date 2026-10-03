@@ -37,7 +37,14 @@ the text temperatures (it is a text-only request to the server).
 `research/image-track/temps.py` fits per-kind temperatures by NLL on held-out rows and
 rescores a run exactly from its stored probabilities (logits = T0 * log p).
 
-Runs (all v19, H100, `research/image-track/remote/i1.sh`, commit 0191d24):
+Runs (all v19, H100, `research/image-track/remote/i1.sh`, commit 0191d24; evaluation is
+deterministic, no seed; temperature fit is a 601-point log grid over [0.3, 6]). Command
+shape: `python evaluation/vision/run.py --out /root/runs/<run> --systems strands --device cuda
+--nb-groups 300 --pope 600 --ijb-jsonl /root/ijb/ijb_preview.jsonl --long-side 0 --max-pixels 400000`
+(held-out: `--nb-start 300 --nb-groups 300 --pope 0 --no-blind`); then
+`temps.py fit --rows <cal>/strands-v19.jsonl --out T.json` and
+`temps.py apply --run <eval> --temps T.json --out <eval>-T`. Outputs (per item):
+`checkpoints/image-runs/{i1-v19-448,i1-v19-448-T,i1-v19-px400k,i1-v19-px400k-T,i1-v19-px800k,cal-v19-448,cal-v19-px400k}`.
 
 | run | resize | items |
 |---|---|---|
@@ -116,6 +123,29 @@ GQA, PlotQA and AITW were not used (time): PlotQA's role is taken by our own cha
 - No NaturalBench, POPE, MMBench or Image JevBench item, image or question is in any
   training file; the unlisted v0.2 preview page was not used.
 
-## Training runs
+## Training runs (I2) — pre-registered, not yet started
 
-(entries below)
+Status 09:52 UTC: blocked on GPU. After host 1 was destroyed, every `vastai create`
+(2x H100 36742498, 1x H100 51351729) fails with `400: Unrent some instances or try again in a
+few hours` — the account appears capped at 4 GPUs and the text track holds a 4x H100. Retries
+every 25 min (scratchpad `rent.sh`).
+
+Common to all runs: `research/image-track/train.py`, init v19@bb282d78 via
+`VisionDeciderModel.load` (adapter + head continue; ViT and merger frozen; LoRA on the decoder
+only), data as above (dedupe_drop empty), 3,000 text-replay rows, 3% val split by source,
+temperature 1 in training, 400k-pixel budget in training and evaluation, lr 5e-5 (LoRA) /
+2e-4 (head), 32 rows per step, 1 epoch (~1,400 steps), KL(frozen torso || student) 0.3 on all
+rows. Then `remote/run_variant.sh` evaluates (NB/POPE/IJB + blind), fits image temperatures on
+NB 300-599, rescores, and runs `text_check.py` (v19's committed held-out text rows:
+generated_v16_eval, generated_v18_eval, adequacy_gen_eval; 899 rows). Smoke test on host 1
+(30 steps, commit 0886141+): loss falls, checkpoint loads in run.py --checkpoint.
+
+| run | config | change | seed |
+|---|---|---|---|
+| a-full-s0 | configs/a-full.yaml | full mix, 15% image-removed KL-only copies (kl_only_weight 1.0) | 0 |
+| b-noabl-s0 | configs/b-noabl.yaml | as A without image-removed copies | 0 |
+| v19-px400k-host2 / v19-px800k-host2 | remote/run_baseline.sh | v19 re-evaluated in host 2's environment (fla kernels) for a same-environment baseline | - |
+| <best>-s1, <best>-s2 | configs/<best>-s{1,2}.yaml | seeds 1 and 2 of the better of A/B | 1, 2 |
+
+Launch: `bash research/image-track/remote/bootstrap2.sh` (setup, fla, deterministic data
+rebuild — sha256 must match the hashes above — dedupe), then `remote/launch.sh`.
