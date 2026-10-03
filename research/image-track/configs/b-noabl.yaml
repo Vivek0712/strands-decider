@@ -1,0 +1,34 @@
+# Image track run B: as A without the image-removed KL-only rows (seed 0).
+init_checkpoint: StrandsAgents/strands-decider-2B-hobson-v19   # rev bb282d78 (train.py pins it)
+data_root: /root/data
+train_files: [vqa.jsonl, count.jsonl, m2w.jsonl, charts.jsonl, docs.jsonl, tabfact.jsonl]
+dedupe_drop: /root/data/dedupe_drop.txt
+text_replay_files: [/root/sd/data/synthetic/generated_v16.jsonl, /root/sd/data/synthetic/generated_v18.jsonl,
+                    /root/sd/data/synthetic/adequacy_gen.jsonl]
+text_replay_n: 3000
+ablation_fraction: 0.0         # variant B: no image-removed KL-only copies
+kl_frozen_weight: 0.3
+kl_only_weight: 1.0
+val_fraction: 0.03
+image_long_side: 0             # I1: a pixel budget beats a long-side cap
+image_max_pixels: 400000
+est_image_tokens: 400
+max_length: 4096
+shuffle_options: true
+ordinal_smoothing: 0.1
+epochs: 1
+lr: 0.00005
+head_lr: 0.0002
+weight_decay: 0.01
+warmup_ratio: 0.03
+max_grad_norm: 1.0
+micro_rows: 16
+micro_tokens: 12000
+rows_per_step: 32
+gradient_checkpointing: true
+workers: 8
+log_every: 20
+eval_every: 400
+val_batches: 60
+seed: 0
+output_dir: /root/ckpt/b-noabl-s0

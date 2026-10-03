@@ -176,7 +176,7 @@ def main() -> None:
     os.makedirs(os.path.join(a.out, "m2w"), exist_ok=True)
     jobs = [(p, a.out, i, a.per_file, set(a.exclude_websites)) for i, p in enumerate(sorted(a.parquets))]
     with mp.Pool(a.workers) as pool:
-        rows = [r for part in pool.imap_unordered(process, jobs) for r in part]
+        rows = [r for part in pool.imap(process, jobs) for r in part]  # ordered: deterministic file
     write(os.path.join(a.out, "m2w.jsonl"), rows)
 
 

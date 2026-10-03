@@ -63,7 +63,7 @@ def row(d: str) -> dict[str, Any]:
     if "ijb_preview" in m:
         ij = m["ijb_preview"]
         out.update(ijb_exact=f'{round(ij["exact_only"]["accuracy"] * ij["exact_only"]["n"])}/{ij["exact_only"]["n"]}',
-                   ijb_all=ij["all"]["accuracy"],
+                   ijb_all=ij["all"]["accuracy"], ijb_ece=ij["all"]["ece"], ijb_exact_ece=ij["exact_only"]["ece"],
                    ijb_fam={k: v["accuracy"] for k, v in ij["by_dataset"].items()})
     for bench, key in (("naturalbench", "nb"), ("pope_adversarial", "pope")):
         if bench in b:
