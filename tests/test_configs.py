@@ -88,3 +88,21 @@ def test_v19_images_seeds_differ_only_in_seed_and_output_dir(seed):
                 for s in (f"-seed{seed}", ""))
     assert _differing_keys(rep, ref) == {"seed", "output_dir"}
     assert rep["seed"] == seed
+
+
+BAKEOFF = ("qwen35-2b", "minicpm5-2b", "gemma4-e2b")
+
+
+def test_bakeoff_configs_differ_only_in_the_base():
+    ref = _load("configs", "experiments", "bakeoff", "qwen35-2b.yaml")
+    for name in BAKEOFF[1:]:
+        other = _load("configs", "experiments", "bakeoff", f"{name}.yaml")
+        assert _differing_keys(other, ref) == {"base_model", "base_model_revision", "lora_targets", "output_dir"}
+    # From the raw base, on v19-yn27b's data and losses
+    yn = _load("configs", "experiments", "v19-yn27b.yaml")
+    assert ref["continue_from"] is None and ref["init_from"] is None
+    assert ref["base_model"] == yn["base_model"] and ref["lora_targets"] == yn["lora_targets"]
+    same = {"train_files", "kl_frozen_weight", "kl_frozen_skip_kinds", "head_type", "pointer_dim", "lora_r",
+            "lora_alpha", "lr", "head_lr", "micro_batch_size", "grad_accum", "max_length", "seed"}
+    assert all(ref[k] == yn[k] for k in same)
+    assert ref["teacher_file"] == "data/teacher_t4.jsonl"
