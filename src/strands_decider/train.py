@@ -135,7 +135,16 @@ class TrainConfig(YamlConfig):
 
     # bookkeeping
     output_dir: str = "checkpoints/hobson-1.7b"
+    # `seed` drives everything drawn while training: the validation split, the data order,
+    # option shuffles, score reversals and dropout. `init_seed`, when set, drives only the
+    # random initialisation -- the fresh head and the LoRA A matrices -- after which the
+    # torch RNG is reseeded with `seed`. Runs that share an init_seed and differ in seed
+    # start from identical weights and see different data, which is what averaging their
+    # weights (strands_decider.soup) needs. None (the default) seeds the initialisation
+    # with `seed` and reseeds nothing, exactly as before the option existed. A
+    # continue_from run initialises nothing at random, so init_seed does not touch it.
     seed: int = 0
+    init_seed: int | None = None
     log_every: int = 20
     eval_every: int = 500
     save_every: int = 0  # 0 = only at the end
@@ -285,8 +294,8 @@ def _frozen_reference(model: StrandsDeciderModel, examples: list[Example], batch
 @distributed.entry_point  # under torchrun, this process is one rank of the run
 def train(cfg: TrainConfig) -> str:
     rank, _, world = distributed.env()
-    torch.manual_seed(cfg.seed)
-    random.seed(cfg.seed)
+    torch.manual_seed(cfg.seed if cfg.init_seed is None else cfg.init_seed)
+    random.seed(cfg.seed)  # model construction draws nothing from Python's RNG
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     print(f"[strands-decider] loading base model {cfg.base_model}")
@@ -361,6 +370,10 @@ def train(cfg: TrainConfig) -> str:
         print(f"[strands-decider] head seeded from lm_head rows for {seeded} slots")
     elif cfg.head_init != "random":
         raise ValueError(f"unknown head_init {cfg.head_init!r}")
+    if cfg.init_seed is not None:
+        # Initialisation is over: from here on the torch RNG (the unsorted DataLoader's
+        # order, dropout) follows `seed`, whatever init_seed was.
+        torch.manual_seed(cfg.seed)
     # Checkpointing needs a grad-requiring input; a frozen torso has none, and it
     # buys nothing anyway since no backward pass traverses it.
     if cfg.gradient_checkpointing and not (cfg.freeze_torso or cfg.init_from):
