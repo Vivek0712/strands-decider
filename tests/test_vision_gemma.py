@@ -12,16 +12,20 @@ what the feature promises:
   `<image|>`, and the shared-prefix path over one or two images (a prefix far longer than the
   sliding window, forked across three questions) equals a plain full forward;
 * the frozen KL reference with an image is the LM's own soft-capped reading;
-* a checkpoint saved from the vision model loads back to the same answers;
-* `serve --vision` works for a Gemma checkpoint, and text requests get the text server's answers.
+* image training moves the loss and saves a checkpoint that loads back to the same answers;
+* evaluation (run.py's strands and untrained systems, text_check.py) and `serve --vision`
+  work for a Gemma checkpoint.
 """
 
 from __future__ import annotations
 
 import base64
 import io
+import json
 import os
+import random
 import re
+import sys
 
 import pytest
 
@@ -60,6 +64,16 @@ from strands_decider.vision import (  # noqa: E402
     process_images,
     render_image_state,
 )
+from strands_decider.vision_train import (  # noqa: E402
+    ImageCollator,
+    VisionTrainConfig,
+    row_losses,
+    train,
+)
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, "data", "image"))
+import common  # noqa: E402
 
 BOI, IMAGE, EOI = GEMMA_IMAGE_TOKENS
 # The tiny Gemma's last two layers share earlier layers' keys and values: no k_proj / v_proj.
@@ -285,7 +299,64 @@ def test_frozen_readout_with_an_image_is_the_lms_own(engines, base_dir):
     torch.testing.assert_close(lp[0, : q.n_slots], want, atol=1e-5, rtol=1e-5)
 
 
-# ---- checkpoints ------------------------------------------------------------------------
+# ---- training ---------------------------------------------------------------------------
+
+
+def _image_rows(root, n: int = 6) -> None:
+    rng = random.Random(0)
+    os.makedirs(root / "img", exist_ok=True)
+    rows = []
+    for k in range(n):
+        name = f"img/{k}.png"
+        Image.new("RGB", (64 + 16 * k, 48), (40 * k % 255, 90, 160)).save(root / name)
+        kw = dict(source="synthetic", images=[name], source_id=f"img-{k}")
+        rows.append(common.yesno(f"Is image {k} blue?", k % 2 == 0, rng, task="blue", pair_id=f"pair-{k // 2}", **kw))
+        rows.append(common.row("choice", "Which colour?", [["red", ""], ["green", ""], ["blue", ""]], 2,
+                               task="colour", **kw))
+    common.write(str(root / "rows.jsonl"), rows)
+
+
+def _cfg(root, **over) -> VisionTrainConfig:
+    return VisionTrainConfig(data_root=str(root), train_files=["rows.jsonl"], image_long_side=0,
+                             image_max_pixels=4096, workers=0, **over)
+
+
+def test_collated_rows_carry_gemma_images(ckpt, tmp_path):
+    _image_rows(tmp_path)
+    model = VisionDeciderModel.load(ckpt, trainable=True)
+    cfg = _cfg(tmp_path, ablation_fraction=1.0)
+    from strands_decider.vision_train import load_rows
+
+    rows = [r for r in load_rows(cfg) if r["task"] in ("colour", "colour/ablation")][:4]
+    batch = ImageCollator(model.tokenizer, load_image_processor(model.config), cfg, train=True)(rows, index=1)
+    assert {"pixel_values", "image_position_ids"} <= set(batch) and "image_grid_thw" not in batch
+    image_id = model.torso.config.image_token_id
+    n_images = sum(bool(r["images"]) for r in rows)
+    assert batch["pixel_values"].shape[0] == n_images
+    for i, r in enumerate(rows):
+        assert bool((batch["input_ids"][i] == image_id).any()) == bool(r["images"])
+    ce, kl, lp = row_losses(model, batch, 0.3, 1.0)
+    assert lp.shape == (len(rows), 3) and torch.isfinite(ce).all() and torch.isfinite(kl).all()
+    copy = batch["ablation"]
+    assert torch.all(ce[copy] == 0) and torch.all(kl[copy] > 0)
+
+
+def test_three_steps_of_image_training_reduce_the_loss_and_round_trip(ckpt, tmp_path):
+    _image_rows(tmp_path)
+    out = train(_cfg(tmp_path, init_from=ckpt, init_revision=None, rows_per_step=12, micro_rows=12,
+                     micro_tokens=100_000, epochs=3, max_steps=3, lr=1e-2, head_lr=1e-2, log_every=1,
+                     eval_every=0, val_fraction=0.0, shuffle_options=False, kl_frozen_weight=0.0,
+                     output_dir=str(tmp_path / "out")))
+    with open(os.path.join(out, "history.json"), encoding="utf-8") as fh:
+        ce = [h["ce"] for h in json.load(fh) if "ce" in h]
+    assert len(ce) == 3 and ce[-1] < ce[0]
+    saved = load_file(os.path.join(out, "lora", "adapter_model.safetensors"))
+    assert saved and all(".language_model." in k for k in saved)  # multimodal keys, loaded as they are
+    before = load_file(os.path.join(ckpt, "lora", "adapter_model.safetensors"))
+    assert any(not torch.equal(v, saved[k.replace("base_model.model.", "base_model.model.language_model.", 1)])
+               for k, v in before.items())
+    loaded = VisionDeciderModel.load(out)
+    assert _lora_modules(loaded.torso) == LORA
 
 
 @torch.no_grad()
@@ -306,7 +377,38 @@ def test_save_load_round_trip(ckpt, tmp_path):
     assert a.evaluate(text).model_dump()["answers"] == b.evaluate(text).model_dump()["answers"]
 
 
-# ---- serving ----------------------------------------------------------------------------
+# ---- evaluation and serving -------------------------------------------------------------
+
+
+def test_evaluation_systems_run_on_gemma(ckpt, base_dir):
+    from vision.run import QwenUntrained, Strands
+
+    item = {"kind": "noul", "question": "Is the form signed?", "options": [("no", ""), ("yes", "")],
+            "gold": 1, "image": base64.b64decode(_b64(320, 320, 6))}
+    for system in (Strands(ckpt), QwenUntrained(base_dir)):
+        assert system.family == GEMMA
+        for blind in (False, True):
+            p = system.probs(item, blind)
+            assert len(p) == 2 and sum(p) == pytest.approx(1.0, abs=1e-5)
+        assert system.probs(item, False) != pytest.approx(system.probs(item, True), abs=1e-6)
+
+
+def test_text_check_runs_on_gemma(ckpt, tmp_path, monkeypatch):
+    from vision import text_check
+
+    row = {"kind": "noul", "state": "Order 7 shipped late.", "instructions": "Was it late?",
+           "options": [["false", "on time"], ["true", "late"]], "label": 1, "task": "late"}
+    for f in text_check.FILES:
+        (tmp_path / f).write_text(json.dumps(row) + "\n")
+    monkeypatch.setattr(sys, "argv", ["text_check", "--checkpoint", ckpt, "--data-dir", str(tmp_path),
+                                      "--out", str(tmp_path / "out.json"), "--device", "cpu"])
+    text_check.main()
+    rows = json.loads((tmp_path / "out.json").read_text())["rows"]
+    text = SystemOneEngine(StrandsDeciderModel.load(ckpt), EngineConfig(device="cpu")).ask(
+        row["state"], {"q": NoulQuestion(instructions=row["instructions"],
+                                         criteria={"false": "on time", "true": "late"})})
+    # the text engine reports noul to 4 decimals
+    assert len(rows) == 3 and rows[0]["probs"][1] == pytest.approx(text.answers["q"].noul, abs=1e-4)
 
 
 def test_serve_vision(ckpt):

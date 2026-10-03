@@ -106,3 +106,36 @@ def test_bakeoff_configs_differ_only_in_the_base():
             "lora_alpha", "lr", "head_lr", "micro_batch_size", "grad_accum", "max_length", "seed"}
     assert all(ref[k] == yn[k] for k in same)
     assert ref["teacher_file"] == "data/teacher_t4.jsonl"
+
+
+def _vision(name: str) -> dict:
+    from strands_decider.vision_train import VisionTrainConfig
+
+    return dataclasses.asdict(VisionTrainConfig.from_yaml(os.path.join(ROOT, "configs", "vision", f"{name}.yaml")))
+
+
+def test_gemma_images_is_v19_images_except_its_start_and_token_estimate():
+    """The Gemma image arm is variant A on the same data: image-removed copies, 400k pixels."""
+    gemma, v19 = _vision("gemma4-e2b-images"), _vision("v19-images")
+    assert _differing_keys(gemma, v19) == {"init_from", "init_revision", "est_image_tokens", "output_dir"}
+    assert gemma["ablation_fraction"] == 0.15 and gemma["image_max_pixels"] == 400_000
+    # starts from the Gemma bake-off's text checkpoint unless given another at run time
+    assert gemma["init_from"] == _load("configs", "experiments", "bakeoff", "gemma4-e2b.yaml")["output_dir"]
+    assert gemma["init_revision"] is None
+
+
+@pytest.mark.parametrize("seed", [1, 2])
+def test_gemma_images_seeds_differ_only_in_seed_and_output_dir(seed):
+    rep, ref = _vision(f"gemma4-e2b-images-seed{seed}"), _vision("gemma4-e2b-images")
+    assert _differing_keys(rep, ref) == {"seed", "output_dir"}
+    assert rep["seed"] == seed and rep["output_dir"] == f"{ref['output_dir']}-seed{seed}"
+
+
+def test_vision_train_overrides_init_from_at_run_time():
+    from strands_decider.vision_train import VisionTrainConfig, with_overrides
+
+    cfg = VisionTrainConfig.from_yaml(os.path.join(ROOT, "configs", "vision", "gemma4-e2b-images.yaml"))
+    over = with_overrides(cfg, ["init_from=/ckpt/gemma-text", "max_steps=3"])
+    assert (over.init_from, over.max_steps, over.seed) == ("/ckpt/gemma-text", 3, 0)
+    with pytest.raises(SystemExit):
+        with_overrides(cfg, ["init_frm=/x"])

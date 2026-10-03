@@ -16,7 +16,10 @@
 #
 # Usage: training/recipe_images.sh STEP [STEP ...], each one of fetch build dedupe train eval.
 # CONFIG (default configs/vision/v19-images.yaml) and CKPT (default its output_dir) choose
-# the run; OUT (default reports/$(basename $CKPT)) holds the evaluation. The builders need
+# the run; OUT (default reports/$(basename $CKPT)) holds the evaluation. INIT_FROM, when set,
+# replaces the config's init_from (the text checkpoint to continue), for the Gemma 4 configs:
+#   INIT_FROM=/path/to/gemma-text-ckpt CONFIG=configs/vision/gemma4-e2b-images.yaml \
+#     training/recipe_images.sh train eval The builders need
 # matplotlib, pyarrow, curl and the DejaVu and Liberation fonts; dedupe needs imagehash and
 # pandas; eval needs pandas and pyarrow.
 set -euo pipefail
@@ -78,7 +81,7 @@ dedupe() {
     --files vqa.jsonl count.jsonl m2w.jsonl charts.jsonl docs.jsonl tabfact.jsonl
 }
 
-train() { "$PY" -m strands_decider.vision_train "$CONFIG"; }
+train() { "$PY" -m strands_decider.vision_train "$CONFIG" ${INIT_FROM:+"init_from=$INIT_FROM"}; }
 
 evaluate() {
   local run=(--systems strands --device cuda --checkpoint "$CKPT" --long-side 0 --max-pixels 400000)

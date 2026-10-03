@@ -5,7 +5,7 @@ Rows: the committed held-out evaluation splits of v19's own generated training d
 none of which image training trains on). Each row is rendered as the server renders it
 (prompting.build_prompt, canonical option order), forwarded whole through the multimodal
 torso with no image (the weights the text path runs through) and read with the
-checkpoint's text temperatures.
+checkpoint's text temperatures. Works for a Qwen3.5 (v19) or a Gemma 4 E2B checkpoint.
 
     python evaluation/vision/text_check.py --checkpoint CKPT --out text_check.json
 """
@@ -33,7 +33,7 @@ FILES = ["generated_v16_eval.jsonl", "generated_v18_eval.jsonl", "adequacy_gen_e
 
 @torch.no_grad()
 def main() -> None:
-    from strands_decider.vision import VisionDeciderModel, qwen_base
+    from strands_decider.vision import VisionDeciderModel, reset_positions
 
     ap = argparse.ArgumentParser()
     ap.add_argument("--checkpoint", default=V19)
@@ -62,7 +62,7 @@ def main() -> None:
                 continue
             opt = _option_token_index(enc["offset_mapping"], rq.option_spans, len(prompt) - len(rq.text))
             ids = torch.tensor([enc["input_ids"]], device=dev)
-            qwen_base(model.torso).rope_deltas = None
+            reset_positions(model.torso)
             out = model(ids, torch.ones_like(ids), torch.tensor([rq.n_slots], device=dev),
                         opt_idx=torch.tensor([opt], device=dev),
                         temperature=temps.get(ex.kind, model.config.temperature))

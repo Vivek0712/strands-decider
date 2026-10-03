@@ -23,7 +23,13 @@ server renders them (one collator draw per row: option order and phrasing), and 
 are decoded (`read_image`) and resized (`fit_image`) as the server does, then processed
 by the PIL image processor the engine pins.
 
+The torso is whichever family the checkpoint's `base_model` is: Qwen3.5 (v19) or Gemma 4
+(a Gemma 4 E2B text checkpoint; configs/vision/gemma4-e2b-images.yaml). `key=value`
+arguments after the config override its fields (values read as YAML):
+
     python -m strands_decider.vision_train configs/vision/v19-images.yaml
+    python -m strands_decider.vision_train configs/vision/gemma4-e2b-images.yaml \
+        init_from=checkpoints/bakeoff-gemma4-e2b
 
 Single process, one GPU: about 46 minutes for the recorded 1,404 steps on one H100.
 """
@@ -50,11 +56,17 @@ from .vision import (
     VisionDeciderModel,
     expand_image_tokens,
     fit_image,
-    image_tokens_for_grid,
-    qwen_base,
+    load_image_processor,
+    mm_base,
+    process_images,
+    processor_family,
     read_image,
     render_image_state,
+    reset_positions,
 )
+
+# The image tensors a collated batch may carry: Qwen's, then Gemma 4's.
+MM_KEYS = ("pixel_values", "image_grid_thw", "image_position_ids")
 
 Row = dict[str, Any]
 MAX_KL_OPTIONS = 9  # the frozen reading scores the single-token option numbers 1-9
@@ -197,6 +209,7 @@ class ImageCollator:
 
     def __init__(self, tokenizer: Any, processor: Any, cfg: VisionTrainConfig, *, train: bool):
         self.tok, self.proc, self.cfg, self.train = tokenizer, processor, cfg, train
+        self.family = processor_family(processor)
         self.ccfg = CollatorConfig(max_length=cfg.max_length, num_slots=24, head_type="pointer",
                                    shuffle_options=cfg.shuffle_options,
                                    ordinal_smoothing=cfg.ordinal_smoothing, seed=0)
@@ -213,16 +226,15 @@ class ImageCollator:
         counts: list[int] = []
         out: dict[str, torch.Tensor] = {}
         if images:
-            mm = self.proc(images=images, return_tensors="pt")
-            counts = image_tokens_for_grid(mm["image_grid_thw"].tolist(), self.proc.merge_size)
-            out = {"pixel_values": mm["pixel_values"], "image_grid_thw": mm["image_grid_thw"]}
+            counts, out = process_images(self.proc, images)
         ids, opts, labels, targets = [], [], [], []
         c = 0
         for r in rows:
             ex, n_img = Example.from_dict(r), len(r.get("images", []))
             order, question, label, target = base.draw(ex)
             rq = render_question(question, option_order=order)
-            prompt = expand_image_tokens(render_image_state(ex.state, n_img), counts[c : c + n_img]) + rq.text
+            prompt = expand_image_tokens(render_image_state(ex.state, n_img, self.family),
+                                         counts[c : c + n_img], self.family) + rq.text
             c += n_img
             enc = self.tok(prompt, return_offsets_mapping=True)
             if len(enc["input_ids"]) > self.cfg.max_length:
@@ -267,7 +279,7 @@ class MicroBatches(Dataset):
 def row_losses(model: VisionDeciderModel, batch: dict[str, torch.Tensor], kl_weight: float,
                kl_only_weight: float) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Per-row label loss and frozen-KL term (see the module docstring), and log probs."""
-    mm = {k: batch[k] for k in ("pixel_values", "image_grid_thw") if k in batch}
+    mm = {k: batch[k] for k in MM_KEYS if k in batch}
     out = model(batch["input_ids"], batch["attention_mask"], batch["n_slots"], opt_idx=batch["opt_idx"],
                 temperature=1.0, **mm)
     lp = out["log_probs"]
@@ -279,7 +291,7 @@ def row_losses(model: VisionDeciderModel, batch: dict[str, torch.Tensor], kl_wei
     ce = ce * batch["weights"]
     kl = torch.zeros_like(ce)
     if kl_weight > 0 or kl_only_weight > 0:
-        qwen_base(model.torso).rope_deltas = None  # positions of this batch, not the last
+        reset_positions(model.torso)  # positions of this batch, not the last
         ref, eligible = model.frozen_slot_log_probs(batch["input_ids"], batch["attention_mask"],
                                                     batch["n_slots"], **mm)
         if ref.numel():
@@ -288,7 +300,7 @@ def row_losses(model: VisionDeciderModel, batch: dict[str, torch.Tensor], kl_wei
             p = ref.exp().masked_fill(~valid, 0.0)
             per_row = (p * (ref - lp).masked_fill(~valid, 0.0)).sum(-1) * eligible.float()
             kl = torch.where(batch["ablation"], kl_only_weight, kl_weight) * per_row
-    qwen_base(model.torso).rope_deltas = None
+    reset_positions(model.torso)
     return ce, kl, lp
 
 
@@ -318,7 +330,7 @@ def load_model(cfg: VisionTrainConfig) -> VisionDeciderModel:
     # Fitted on the checkpoint's own answers to images; stale once it trains on them.
     model.config.image_temperature_by_kind = {}
     if cfg.gradient_checkpointing:
-        qwen_base(model.torso).gradient_checkpointing_enable(
+        mm_base(model.torso).gradient_checkpointing_enable(
             gradient_checkpointing_kwargs={"use_reentrant": False})
     return model
 
@@ -342,9 +354,7 @@ def train(cfg: VisionTrainConfig) -> str:
                 "ablation_train": sum(bool(r.get("ablation")) for r in train_rows)}
     print(f"[vision-train] {json.dumps(manifest)}", flush=True)
 
-    from transformers import Qwen2VLImageProcessorPil
-
-    proc = Qwen2VLImageProcessorPil.from_pretrained(model.config.base_model)  # as VisionEngine pins it
+    proc = load_image_processor(model.config)  # as VisionEngine pins it
     lengths = [est_length(r, cfg.est_image_tokens) for r in train_rows]
     batches = [b for e in range(cfg.epochs)
                for b in plan_batches(lengths, cfg.micro_rows, cfg.micro_tokens, cfg.seed * 100 + e)]
@@ -407,11 +417,27 @@ def train(cfg: VisionTrainConfig) -> str:
     return cfg.output_dir
 
 
+def with_overrides(cfg: VisionTrainConfig, pairs: list[str]) -> VisionTrainConfig:
+    """`cfg` with `key=value` overrides applied (values read as YAML), refusing unknown keys."""
+    import dataclasses
+
+    import yaml
+
+    known = {f.name for f in dataclasses.fields(cfg)}
+    over: dict[str, Any] = {}
+    for pair in pairs:
+        key, sep, value = pair.partition("=")
+        if not sep or key not in known:
+            raise SystemExit(f"not a key=value override of a config field: {pair!r}")
+        over[key] = yaml.safe_load(value)
+    return dataclasses.replace(cfg, **over)
+
+
 def main(argv: list[str] | None = None) -> None:
     args = sys.argv[1:] if argv is None else argv
-    if len(args) != 1:
-        raise SystemExit("usage: python -m strands_decider.vision_train CONFIG.yaml")
-    train(VisionTrainConfig.from_yaml(args[0]))
+    if not args:
+        raise SystemExit("usage: python -m strands_decider.vision_train CONFIG.yaml [key=value ...]")
+    train(with_overrides(VisionTrainConfig.from_yaml(args[0]), args[1:]))
 
 
 if __name__ == "__main__":
