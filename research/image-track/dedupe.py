@@ -6,7 +6,7 @@ uses its first 600 questions), and all 128 rebuilt Image JevBench preview items.
 Checks: (1) COCO ids - training uses train2014 only, POPE is val2014; the id sets are
 intersected anyway; (2) perceptual hash (pHash 64-bit) of every training image against
 every evaluation image; Hamming distance <= THRESH marks a training image for removal.
-Also hashes 8 crops-free resized variants? No: pHash is resize-invariant by design.
+pHash is computed on a 32x32 greyscale downsample, so it is insensitive to resizing.
 
 Writes <out>/dedupe_drop.txt (training image paths to drop) and dedupe_report.json.
 """
@@ -91,16 +91,17 @@ def main() -> None:
         d = np.array([bin(int(v)).count("1") for v in x])
         i = int(d.argmin())
         hist[int(d[i])] += 1
+        if d[i] <= 10:  # every close pair is listed for inspection; <= THRESH is dropped
+            near.append({"train": p, "eval": ek[i], "hamming": int(d[i]), "dropped": bool(d[i] <= THRESH)})
         if d[i] <= THRESH:
             drop.append(p)
-            near.append({"train": p, "eval": ek[i], "hamming": int(d[i])})
     report = {
         "eval_images_hashed": len(ek), "eval_breakdown": {
             "naturalbench_groups_0_599": sum(k.startswith("nb-") for k in ek),
             "pope_adversarial_unique_images": sum(k.startswith("pope-") for k in ek),
             "ijb_preview": sum(k.startswith("ijb-") for k in ek)},
         "train_images_hashed": len(trh), "threshold_hamming": THRESH,
-        "dropped": len(drop), "near_duplicates": near[:200],
+        "dropped": len(drop), "closest_pairs_hamming_le_10": sorted(near, key=lambda x: x["hamming"]),
         "unreadable_train_images": sum(v is None for v in trh.values()),
         "min_hamming_histogram_0_to_16": hist[:17],
         "coco_train2014_ids": len(coco_train_ids), "pope_val2014_ids": len(pope_ids),
@@ -108,7 +109,7 @@ def main() -> None:
     }
     open(os.path.join(a.data_root, "dedupe_drop.txt"), "w").writelines(p + "\n" for p in drop)
     json.dump(report, open(os.path.join(a.data_root, "dedupe_report.json"), "w"), indent=2)
-    print(json.dumps({k: v for k, v in report.items() if k != "near_duplicates"}, indent=1))
+    print(json.dumps({k: v for k, v in report.items() if k != "closest_pairs_hamming_le_10"}, indent=1))
 
 
 if __name__ == "__main__":

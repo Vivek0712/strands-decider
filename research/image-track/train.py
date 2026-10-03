@@ -32,6 +32,8 @@ from typing import Any
 
 import torch
 import yaml
+
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 from torch.utils.data import DataLoader, Dataset
 
 from strands_decider.data.collate import CollatorConfig, SystemOneCollator
@@ -60,8 +62,6 @@ def load_rows(cfg: dict[str, Any]) -> list[dict[str, Any]]:
     for f in cfg["train_files"]:
         n = cfg.get("caps", {}).get(os.path.basename(f))
         part = [json.loads(x) for x in open(os.path.join(root, f), encoding="utf-8") if x.strip()]
-        if cfg.get("drop_sources_file"):
-            pass
         if n and len(part) > n:
             rng.shuffle(part)
             part = part[:n]
@@ -257,7 +257,8 @@ def evaluate(model, loader, device) -> dict[str, float]:
         if batch is None:
             continue
         batch = {k: v.to(device) for k, v in batch.items()}
-        ce, _, lp = row_losses(model, batch, 0.0, 0.0)
+        with torch.autocast("cuda", dtype=torch.bfloat16):
+            ce, _, lp = row_losses(model, batch, 0.0, 0.0)
         ok = (lp.argmax(-1) == batch["labels"]).float()
         n += len(ok)
         correct += float(ok.sum())
@@ -383,6 +384,8 @@ def main(cfg_path: str) -> None:
             if cfg.get("eval_every") and step % cfg["eval_every"] == 0:
                 hist.append({"step": step, **evaluate(model, vloader, device)})
                 print(f"[image-train] eval {hist[-1]}", flush=True)
+            if cfg.get("max_steps") and step >= cfg["max_steps"]:
+                break
     hist.append({"step": step, **evaluate(model, vloader, device), "final": True})
     print(f"[image-train] final {hist[-1]} wall {time.time() - t0:.0f}s", flush=True)
     # Text temperatures stay v19's; image temperatures are fitted afterwards (temps.py).
