@@ -76,3 +76,26 @@ vast.ai spend for this track: about 13 min at $2.13/h ≈ $0.50 (plus a few cent
 Asked to resume after a permission rule was reportedly added. A 4x H100 SXM offer (49362311, $9.07/h, driver 560.35.05)
 was available, but `vastai create instance` was **denied again by the auto-mode classifier ("Real-World Transactions")**.
 No instance was created. The track is still stopped before training; spend is unchanged at about $0.50.
+
+## Run 3 — T3/T4 arms on 4x H100 (2026-10-03)
+
+- Host: vast.ai 53993770, 4x H100 SXM 80GB (driver 560.35.05), $9.11/h, label text-track. Rented by the user
+  (the agent's own rental attempts were blocked by the permission classifier); run driven from the main session.
+- Env as run 0 (torch 2.7.1+cu126, transformers 5.17.0, peft 0.21.0, fla). Host apt mirror was down; switched to
+  archive.ubuntu.com to get gcc (triton needs it). `causal_conv1d` not installed (reference conv path; slower, same maths).
+- Corpus rebuilt: every file's sha256 identical to run 1 (`checkpoints/text-runs/data_sha256_h100x4.txt`);
+  the two held-out files differ from SHA256SUMS exactly as in run 1.
+- T4 labels, Qwen3.5-27B @ fc05daec, two shards on GPU2/3 (18.4 and 12.5 min):
+
+| source | labelled | teacher argmax = gold | mean P(gold) where kept |
+|---|---|---|---|
+| train_v5 (yes/no rows) | 47,449 | 0.831 | 0.952 |
+| adequacy_hs2 | 4,866 | 0.745 | 0.899 |
+| adequacy_gen | 1,300 | 0.919 | 0.952 |
+| generated_v16 (yes/no) | 754 | 0.865 | 0.923 |
+| generated_v18 (yes/no) | 488 | 0.879 | 0.907 |
+
+  `data/teacher_t4.jsonl`: 58,246 rows (12,909 v14 replay + 45,337 kept 27B rows, none overlapping);
+  sha256 5c381fb0…; raw c309aaec….
+- Arms (`research/text-track/arm.sh`: train → `calibrate` on the rebuilt held-out file → JevBench v1, one GPU each):
+  GPU0 t3-control, GPU1 t3-noanchor-yn, GPU2 t4-teacher27b, GPU3 t34-combined; all seed 0, 1,500 steps.
