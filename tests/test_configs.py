@@ -21,7 +21,9 @@ from strands_decider.modeling import StrandsDeciderConfig
 from strands_decider.train import TrainConfig
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CONFIGS = sorted(glob.glob(os.path.join(ROOT, "configs", "**", "*.yaml"), recursive=True))
+# configs/vision/ holds image-training configs (strands_decider.vision_train), the rest TrainConfig's.
+VISION = sorted(glob.glob(os.path.join(ROOT, "configs", "vision", "*.yaml")))
+CONFIGS = sorted(set(glob.glob(os.path.join(ROOT, "configs", "**", "*.yaml"), recursive=True)) - set(VISION))
 FIXTURE = os.path.join(ROOT, "tests", "fixtures", "v19-p5-run1")
 
 
@@ -37,6 +39,13 @@ def _differing_keys(a, b):
 def test_every_config_loads(path):
     # from_yaml rejects unknown keys, so this also fails when a field is removed or renamed.
     TrainConfig.from_yaml(path)
+
+
+@pytest.mark.parametrize("path", VISION, ids=[os.path.relpath(p, ROOT) for p in VISION])
+def test_every_vision_config_loads(path):
+    from strands_decider.vision_train import VisionTrainConfig
+
+    VisionTrainConfig.from_yaml(path)
 
 
 def test_train_yaml_is_v19_except_three_keys():
@@ -67,5 +76,15 @@ def test_v19_saved_configs_load():
 @pytest.mark.parametrize("seed", [1, 2])
 def test_v19_yn27b_seeds_differ_only_in_seed_and_output_dir(seed):
     rep, ref = (_load("configs", "experiments", f"v19-yn27b{s}.yaml") for s in (f"-seed{seed}", ""))
+    assert _differing_keys(rep, ref) == {"seed", "output_dir"}
+    assert rep["seed"] == seed
+
+
+@pytest.mark.parametrize("seed", [1, 2])
+def test_v19_images_seeds_differ_only_in_seed_and_output_dir(seed):
+    from strands_decider.vision_train import VisionTrainConfig
+
+    rep, ref = (dataclasses.asdict(VisionTrainConfig.from_yaml(os.path.join(ROOT, "configs", "vision", f"v19-images{s}.yaml")))
+                for s in (f"-seed{seed}", ""))
     assert _differing_keys(rep, ref) == {"seed", "output_dir"}
     assert rep["seed"] == seed
