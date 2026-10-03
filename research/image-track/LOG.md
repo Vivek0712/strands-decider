@@ -165,3 +165,56 @@ sha256 vs the host-2 values above: charts, count, docs, tabfact **match**; **vqa
 differ** from host 2 (02afc86f…, 37905fb5…). Host 2 is destroyed, so the byte difference cannot be inspected;
 same counts, mix and dedupe. I2 trains on the host-3 files; these hashes are the ones of record for I2:
 charts 1c915218…, count 09a27833…, docs eceece7a…, m2w 013bcdc7…, tabfact 7db5268e…, vqa a7847c38….
+
+## I2 results (host 3, 4x H100 vast 53993770; all runs 400k-pixel budget; finished 15:41Z)
+
+Every run: continue v19 (adapter + head), ~1,404 steps, then NB 300 groups / POPE-adv 600 / 60 rebuilt IJB preview
+items, with the image removed ("blind"), image temperatures fit on NB groups 300-599, and the 899-row text check.
+v19 re-measured in the same environment. Per-run wall about 56 min (b-noabl seed 0: 104 min, shared GPU with lane timing).
+First launch failed instantly (relative config path after `cd`); relaunched 13:57Z with absolute paths, ~25 min idle.
+
+| run | NB acc | NB G | NB ECE | POPE acc | POPE Brier | POPE ECE | IJB exact | IJB all | IJB ECE | blind conf NB | blind ECE NB | blind conf POPE | blind ECE POPE |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| v19-400k | 0.787 | 0.347 | 0.029 | 0.858 | 0.209 | 0.082 | 40/60 | 0.555 | 0.089 | 0.652 | 0.152 | 0.725 | 0.225 |
+| v19-800k | 0.792 | 0.357 | 0.026 | 0.858 | 0.209 | 0.082 | 41/60 | 0.617 | 0.057 | 0.652 | 0.152 | 0.725 | 0.225 |
+| a-full | 0.798 | 0.350 | 0.044 | 0.873 | 0.192 | 0.031 | 42/60 | 0.641 | 0.054 | 0.584 | 0.084 | 0.533 | 0.033 |
+| a-full-s1 | 0.811 | 0.390 | 0.051 | 0.872 | 0.194 | 0.034 | 44/60 | 0.648 | 0.083 | 0.575 | 0.075 | 0.524 | 0.027 |
+| a-full-s2 | 0.806 | 0.373 | 0.049 | 0.878 | 0.189 | 0.032 | 42/60 | 0.617 | 0.105 | 0.586 | 0.086 | 0.522 | 0.037 |
+| b-noabl | 0.800 | 0.343 | 0.042 | 0.880 | 0.187 | 0.033 | 43/60 | 0.617 | 0.058 | 0.614 | 0.114 | 0.659 | 0.159 |
+| b-noabl-s1 | 0.800 | 0.367 | 0.043 | 0.880 | 0.188 | 0.028 | 43/60 | 0.633 | 0.093 | 0.616 | 0.116 | 0.665 | 0.165 |
+| b-noabl-s2 | 0.807 | 0.380 | 0.050 | 0.883 | 0.185 | 0.026 | 43/60 | 0.633 | 0.079 | 0.616 | 0.116 | 0.668 | 0.169 |
+
+| run | ArxivQA | CLEVR-HOPE | Geometry3K | FinQA | ScreenSpot | Multimodal-Mind2Web |
+|---|---|---|---|---|---|---|
+| v19-400k | 0.600 | 0.900 | 0.500 | 0.200 | 0.694 | 0.167 |
+| v19-800k | 0.650 | 0.900 | 0.500 | 0.200 | 0.833 | 0.333 |
+| a-full | 0.500 | 0.950 | 0.650 | 0.300 | 0.833 | 0.333 |
+| a-full-s1 | 0.550 | 0.950 | 0.700 | 0.350 | 0.806 | 0.250 |
+| a-full-s2 | 0.500 | 0.950 | 0.650 | 0.350 | 0.778 | 0.167 |
+| b-noabl | 0.500 | 0.950 | 0.700 | 0.250 | 0.806 | 0.167 |
+| b-noabl-s1 | 0.500 | 0.950 | 0.700 | 0.350 | 0.806 | 0.167 |
+| b-noabl-s2 | 0.500 | 0.950 | 0.700 | 0.300 | 0.806 | 0.250 |
+
+Image temperatures (eval-T) change only ECE/Brier: NB ECE 0.044-0.051 → 0.017-0.028 for every trained run.
+
+Text check (899 held-out text rows from v19's own eval files), accuracy / ECE: v19 0.817 / 0.026;
+A 0.829 / 0.029, 0.820 / 0.024, 0.829 / 0.011; B 0.825 / 0.032, 0.815 / 0.037, 0.834 / 0.027. No text regression.
+
+3-seed means (no image temperatures): 
+
+| | NB acc | NB G-Acc | POPE acc | POPE ECE | IJB exact | blind conf NB / POPE | blind ECE NB / POPE |
+|---|---|---|---|---|---|---|---|
+| v19 (400k, same env) | 0.787 | 0.347 | 0.858 | 0.082 | 40/60 | 0.652 / 0.725 | 0.152 / 0.225 |
+| A (image-removed copies) | **0.805** | **0.371** | 0.874 | 0.032 | 42.7/60 | **0.582 / 0.526** | **0.082 / 0.032** |
+| B (no image-removed copies) | 0.802 | 0.363 | **0.881** | 0.029 | 43.0/60 | 0.615 / 0.664 | 0.115 / 0.164 |
+| Mapika/decider-2b-vision (release, 768 px) | 0.794 | 0.360 | 0.860 | 0.061 | 38/60 | — | — |
+
+Read: image training helps on every benchmark and every seed (NB acc +1.5-2.4 pt, POPE +1.4-2.5 pt, IJB +2-4
+exact, POPE ECE 0.08 → 0.03) without hurting text. A and B are tied on accuracy; **A is the one that fixes the
+failure mode text training left**: with the image removed, A's confidence falls to 0.58 / 0.53 (near chance), B's
+stays at 0.62 / 0.66. **Pick: A.** Against the v19-vision preregistration's predictions (G-Acc ≥ 0.383, acc ≥ 0.802,
+blind conf ≤ 0.58 and ECE ≤ 0.10, POPE ≥ 0.862, IJB ≥ 35/60) A's mean meets all but G-Acc (0.371; seed 1 hit
+0.390) and blind conf NB (0.582, at the line). Exploratory (not the confirmatory run the issue asks for).
+
+Checkpoints and every result file: `~/vision-decider/checkpoints/h100x4-final/` (ckpt/, iruns/). Host 3 total
+09:31-15:49Z = 6.3 h x $9.11 ≈ $57 (shared with the text track). vast credit after: $121.35.
