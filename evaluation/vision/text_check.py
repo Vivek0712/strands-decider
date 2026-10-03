@@ -33,7 +33,7 @@ FILES = ["generated_v16_eval.jsonl", "generated_v18_eval.jsonl", "adequacy_gen_e
 
 @torch.no_grad()
 def main() -> None:
-    from strands_decider.vision import VisionDeciderModel, qwen_base
+    from strands_decider.vision import load_vision_model
 
     ap = argparse.ArgumentParser()
     ap.add_argument("--checkpoint", default=V19)
@@ -47,7 +47,7 @@ def main() -> None:
         from huggingface_hub import snapshot_download
 
         ck = snapshot_download(V19, revision=V19_REV)
-    model = VisionDeciderModel.load(ck).to(a.device).eval()
+    model = load_vision_model(ck).to(a.device).eval()
     dev = a.device
     temps = model.config.temperature_by_kind
     res = []
@@ -62,7 +62,7 @@ def main() -> None:
                 continue
             opt = _option_token_index(enc["offset_mapping"], rq.option_spans, len(prompt) - len(rq.text))
             ids = torch.tensor([enc["input_ids"]], device=dev)
-            qwen_base(model.torso).rope_deltas = None
+            model.reset_positions()
             out = model(ids, torch.ones_like(ids), torch.tensor([rq.n_slots], device=dev),
                         opt_idx=torch.tensor([opt], device=dev),
                         temperature=temps.get(ex.kind, model.config.temperature))

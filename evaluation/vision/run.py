@@ -50,13 +50,7 @@ from strands_decider.infer import _option_token_index
 from strands_decider.modeling import StrandsDeciderConfig, masked_log_softmax
 from strands_decider.prompting import render_question
 from strands_decider.schema import ChoiceQuestion, NoulQuestion, Question
-from strands_decider.vision import (
-    VisionDeciderModel,
-    expand_image_tokens,
-    fit_image,
-    image_tokens_for_grid,
-    render_image_state,
-)
+from strands_decider.vision import ImagePrompt, VisionDeciderModel, fit_image, load_vision_model
 
 # Every download is pinned to the revision the published results were measured on.
 V19, V19_REV = "StrandsAgents/strands-decider-2B-hobson-v19", "bb282d786bc251fd4e3068de3ada9ddbb38127cd"
@@ -172,10 +166,8 @@ class _DeciderSystem:
     max_pixels = 0
     device = "cpu"
 
-    def __init__(self, base: str) -> None:
-        from transformers import Qwen2VLImageProcessorPil
-
-        self.proc = Qwen2VLImageProcessorPil.from_pretrained(base)  # as VisionEngine does
+    def __init__(self, prompter: ImagePrompt) -> None:
+        self.prompter = prompter  # the model's own, its processor pinned as VisionEngine pins it
 
     def _question(self, it: dict[str, Any]) -> Question:
         raise NotImplementedError
@@ -187,10 +179,8 @@ class _DeciderSystem:
         counts: list[int] = []
         n_img = 0 if blind else 1
         if n_img:
-            out = self.proc(images=[fit_image(_pil(it["image"]), self.long_side, self.max_pixels)], return_tensors="pt")
-            counts = image_tokens_for_grid(out["image_grid_thw"].tolist(), self.proc.merge_size)
-            mm = {"pixel_values": out["pixel_values"], "image_grid_thw": out["image_grid_thw"]}
-        text = expand_image_tokens(render_image_state("", n_img), counts) + rq.text
+            counts, mm = self.prompter.process([fit_image(_pil(it["image"]), self.long_side, self.max_pixels)])
+        text = self.prompter.state("", counts) + rq.text
         enc = self.model.tokenizer(text, return_offsets_mapping=True)
         opt = _option_token_index(enc["offset_mapping"], rq.option_spans, len(text) - len(rq.text))
         ids = torch.tensor([enc["input_ids"]], device=self.device)
@@ -214,8 +204,10 @@ class Strands(_DeciderSystem):
         if checkpoint == V19:
             checkpoint = snapshot_download(V19, revision=V19_REV)
         self.device = device
-        self.model = VisionDeciderModel.load(checkpoint).to(torch.float32).to(device).eval()
-        super().__init__(self.model.config.base_model)
+        # Qwen3.5's own tower, or a grafted encoder (strands_decider.graft) when the
+        # checkpoint holds a projector
+        self.model = load_vision_model(checkpoint).to(torch.float32).to(device).eval()
+        super().__init__(self.model.image_prompt())
         cfg = self.model.config
         # Questions over an image take the image temperatures (the checkpoint's, or
         # `image_temps`), as VisionEngine applies them; the image-removed pass is a
@@ -254,7 +246,7 @@ class QwenUntrained(_DeciderSystem):
         tok = AutoTokenizer.from_pretrained(base)
         self.device = device
         self.model = VisionDeciderModel(cfg, VisionDeciderModel._load_torso(cfg, None, None), tok).to(device).eval()
-        super().__init__(base)
+        super().__init__(self.model.image_prompt())
 
     def _question(self, it: dict[str, Any]) -> Question:
         if it["kind"] == "noul":
