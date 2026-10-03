@@ -1,4 +1,4 @@
-"""Grafted eyes for a text-only torso (src/strands_decider/graft.py), on the tiny SigLIP and Llama of tests/tiny_graft.py;
+"""Grafted eyes for a text-only torso (src/strands_decider/graft.py and graft_align.py), on the tiny SigLIP and Llama of tests/tiny_graft.py;
 nothing is downloaded. The tests pin what the feature promises:
 
 * the projector's shapes, and that its pixel-unshuffle groups neighbouring patches;
@@ -8,15 +8,20 @@ nothing is downloaded. The tests pin what the feature promises:
 * text-only requests answer exactly as the text engine does;
 * the shared-prefix path over 1 and 2 images equals a plain full forward;
 * the window cuts the state text, never an image;
+* stage 1 lowers the caption loss and changes only the projector;
 * the server and evaluation load a grafted checkpoint;
-* a checkpoint saves and loads whole, projector included, and is refused without its projector.
+* a checkpoint saves and loads whole, projector included;
+* the caption builder and stage 1 refuse COCO val2014 images (POPE's).
 """
 
 from __future__ import annotations
 
 import base64
 import io
+import json
+import os
 import re
+import sys
 from dataclasses import replace
 
 import pytest
@@ -62,6 +67,10 @@ from strands_decider.vision import (  # noqa: E402
     load_vision_engine,
     qwen_base,
 )
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, "data", "image"))
+import captions  # noqa: E402
 
 STATE = "Help! My payouts have been failing for 3 days."
 QUESTIONS = {
@@ -277,6 +286,97 @@ def test_save_load_round_trip(text_ckpt, stage1, ckpt, tmp_path):
     t = GraftedDeciderModel.load(ckpt, trainable=True)
     assert all(p.requires_grad for p in t.projector.parameters())
     assert not any(p.requires_grad for p in t.encoder.parameters())
+
+
+# ---- stage 1 -------------------------------------------------------------------------------------
+
+
+def _caption_rows(root, n: int = 8) -> None:
+    os.makedirs(root / "coco", exist_ok=True)
+    colours = {"red": (220, 30, 30), "green": (30, 200, 40), "blue": (30, 40, 220), "yellow": (230, 220, 30)}
+    with open(root / "captions.jsonl", "w", encoding="utf-8") as fh:
+        for k in range(n):
+            name = list(colours)[k % 4]
+            path = f"coco/COCO_train2014_{k:012d}.jpg"
+            Image.new("RGB", (48 + 8 * k, 40), colours[name]).save(root / path, format="JPEG")
+            fh.write(json.dumps({"images": [path], "caption": f"A {name} square.",
+                                 "source": "coco_captions_train2014", "source_id": f"coco-{k}"}) + "\n")
+
+
+def _align_cfg(root, base, enc, **over):
+    from strands_decider.graft_align import AlignConfig
+
+    kw = dict(base_model=base, base_model_revision=None, torch_dtype="float32", encoder=enc,
+              encoder_revision=None, data_root=str(root), val_rows=0, batch_size=4, micro_batch=4,
+              workers=0, max_steps=3, lr=1e-2, warmup_ratio=0.0, log_every=1, eval_every=0,
+              output_dir=str(root / "align"))
+    return AlignConfig(**{**kw, **over})
+
+
+def test_stage1_lowers_caption_loss_and_moves_only_the_projector(base, enc, text_ckpt, tmp_path):
+    from strands_decider.graft_align import (
+        _loader,
+        build_aligner,
+        caption_loss,
+        fit,
+        load_rows,
+        train,
+    )
+
+    _caption_rows(tmp_path)
+    cfg = _align_cfg(tmp_path, base, enc)
+    aligner = build_aligner(cfg)
+    assert (aligner.pcfg.tokens_per_image, aligner.pcfg.text_hidden) == (16, 64)
+    rows = load_rows(cfg)
+    # the loss covers the caption and the end-of-text token, nothing of the prompt
+    batch = next(iter(_loader(aligner, rows[:1], cfg, 0, shuffle=False)))
+    ids, labels = batch["input_ids"][0].tolist(), batch["labels"][0].tolist()
+    caption = aligner.tokenizer(rows[0]["caption"], add_special_tokens=False)["input_ids"]
+    target = [*caption, aligner.tokenizer.eos_token_id]
+    assert [y for y in labels if y != -100] == target == ids[-len(target):]
+    assert ids.count(aligner.slot_id) == 16 and ids[0] == aligner.tokenizer.bos_token_id
+    frozen = {f"lm.{k}": v.clone() for k, v in aligner.lm.state_dict().items()}
+    frozen.update({f"enc.{k}": v.clone() for k, v in aligner.encoder.state_dict().items()})
+    proj0 = {k: v.clone() for k, v in aligner.projector.state_dict().items()}
+    before = caption_loss(aligner, _loader(aligner, rows, cfg, 0, shuffle=False), "cpu")
+    history = fit(aligner, rows, [], cfg, "cpu")
+    after = caption_loss(aligner, _loader(aligner, rows, cfg, 0, shuffle=False), "cpu")
+    assert [h["step"] for h in history] == [1, 2, 3]
+    assert after < before
+    now = {f"lm.{k}": v for k, v in aligner.lm.state_dict().items()}
+    now.update({f"enc.{k}": v for k, v in aligner.encoder.state_dict().items()})
+    assert all(torch.equal(frozen[k], now[k]) for k in frozen)
+    assert all(not torch.equal(proj0[k], v) for k, v in aligner.projector.state_dict().items())
+    # the whole stage writes a projector directory stage 2 starts from
+    out = train(_align_cfg(tmp_path, base, enc, max_steps=1))
+    assert os.path.exists(os.path.join(out, "projector.safetensors"))
+    grafted = GraftedDeciderModel.load(text_ckpt, projector_from=out)
+    assert grafted.pcfg == aligner.pcfg
+
+
+def test_caption_rows_refuse_val2014(base, enc, tmp_path):
+    good = {"images": [{"id": 1, "file_name": "COCO_train2014_000000000001.jpg"},
+                       {"id": 2, "file_name": "COCO_train2014_000000000002.jpg"}],
+            "annotations": [{"id": 10, "image_id": 1, "caption": " a dog  on a sofa"},
+                            {"id": 11, "image_id": 1, "caption": "A brown dog."},
+                            {"id": 12, "image_id": 2, "caption": "two cats"}]}
+    rows = captions.build(good, n=10, seed=0)
+    assert [r["images"] for r in rows] == [["coco/COCO_train2014_000000000001.jpg"],
+                                           ["coco/COCO_train2014_000000000002.jpg"]]
+    assert rows[0]["caption"] in {"A dog on a sofa.", "A brown dog."} and rows[1]["caption"] == "Two cats."
+    assert len(captions.build(good, n=1, seed=0)) == 1
+    bad = {**good, "images": [*good["images"], {"id": 3, "file_name": "COCO_val2014_000000000003.jpg"}]}
+    with pytest.raises(ValueError, match="val2014"):
+        captions.build(bad, n=10)
+    # and stage 1 refuses a row file holding one, whoever wrote it
+    from strands_decider.graft_align import load_rows
+
+    _caption_rows(tmp_path, n=2)
+    with open(tmp_path / "captions.jsonl", "a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"images": ["coco/COCO_val2014_000000000003.jpg"], "caption": "x",
+                             "source": "s", "source_id": "v"}) + "\n")
+    with pytest.raises(ValueError, match="val2014"):
+        load_rows(_align_cfg(tmp_path, base, enc))
 
 
 # ---- serving and evaluation ------------------------------------------------------------------

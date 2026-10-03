@@ -23,7 +23,10 @@ from strands_decider.train import TrainConfig
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # configs/vision/ holds image-training configs (strands_decider.vision_train), the rest TrainConfig's.
 VISION = sorted(glob.glob(os.path.join(ROOT, "configs", "vision", "*.yaml")))
-CONFIGS = sorted(set(glob.glob(os.path.join(ROOT, "configs", "**", "*.yaml"), recursive=True)) - set(VISION))
+# configs/align/ holds stage-1 projector alignment configs (strands_decider.graft_align).
+ALIGN = sorted(glob.glob(os.path.join(ROOT, "configs", "align", "*.yaml")))
+CONFIGS = sorted(set(glob.glob(os.path.join(ROOT, "configs", "**", "*.yaml"), recursive=True))
+                 - set(VISION) - set(ALIGN))
 FIXTURE = os.path.join(ROOT, "tests", "fixtures", "v19-p5-run1")
 
 
@@ -78,6 +81,13 @@ def test_v19_yn27b_seeds_differ_only_in_seed_and_output_dir(seed):
     rep, ref = (_load("configs", "experiments", f"v19-yn27b{s}.yaml") for s in (f"-seed{seed}", ""))
     assert _differing_keys(rep, ref) == {"seed", "output_dir"}
     assert rep["seed"] == seed
+
+
+@pytest.mark.parametrize("path", ALIGN, ids=[os.path.relpath(p, ROOT) for p in ALIGN])
+def test_every_align_config_loads(path):
+    from strands_decider.graft_align import AlignConfig
+
+    AlignConfig.from_yaml(path)
 
 
 @pytest.mark.parametrize("seed", [1, 2])
