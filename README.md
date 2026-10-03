@@ -182,6 +182,11 @@ It matches an image-trained 2B decider on accuracy, and on NaturalBench is much 
 calibrated (ECE 0.014 against 0.080); see [docs/vision.md](docs/vision.md) for the request shape,
 how it works and the measurements.
 
+[docs/better-accuracy.md](docs/better-accuracy.md) continues v19 two ways, exploratory and
+with no published weights changed: a 27B teacher for yes/no rows (fewer indecisive yes/no
+answers on JevBench) and image fine-tuning (lower confidence when the image is missing),
+with the code and the commands to reproduce every number.
+
 ## About the model
 
 `strands-decider-2B`, the first model of the family, has 1.9 billion parameters. It answers a

@@ -122,3 +122,11 @@ without the image, v19 still answers at a mean confidence of 0.652 on NaturalBen
 
 The script is `evaluation/vision/run.py`; [evaluation/vision/README.md](../evaluation/vision/README.md)
 has the exact command and a link to every per-item result.
+
+Two opt-in settings change how images are read, and fine-tuning on images builds on them
+([better-accuracy.md](better-accuracy.md#images-the-pixel-budget-image-temperatures-and-training)):
+a pixel budget per image instead of the long-side cap (`VisionEngineConfig.image_max_pixels`,
+`load_vision_engine(image_long_side=0, image_max_pixels=400_000)`; at 400,000 pixels v19 gets
+40 of the 60 preview items right instead of 37, within noise), and per-kind temperatures
+for questions over images (`image_temperature_by_kind`, fitted by
+`evaluation/vision/temps.py`), which `serve --vision` applies when a checkpoint has them.
