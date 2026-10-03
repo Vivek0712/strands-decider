@@ -20,6 +20,10 @@ from ..prompting import build_prompt
 from .format import Example
 
 
+# Row kind as a tensor in every batch ("kind_id"), so a loss term can select by kind.
+KIND_IDS = {"noul": 0, "choice": 1, "score": 2}
+
+
 @dataclass
 class CollatorConfig:
     max_length: int = 3072
@@ -212,6 +216,7 @@ class SystemOneCollator:
             "n_slots": torch.tensor(n_slots, dtype=torch.long),
             "labels": torch.tensor(labels, dtype=torch.long),
             "weights": torch.tensor(weights, dtype=torch.float32),
+            "kind_id": torch.tensor([KIND_IDS[ex.kind] for ex in batch], dtype=torch.long),
         }
         width = self.cfg.num_slots
         if pointer:
