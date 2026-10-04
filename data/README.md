@@ -13,7 +13,10 @@ Reproducing the recipe needs no paid API. To check every recorded file, run
 - [`generators/`](generators/README.md): the generators, their exports and the model backends.
   They need an API key, so the recipe never runs them.
 - [`synthetic/`](synthetic/): the committed generated rows and frozen teacher distributions.
-- [`checks/`](checks/): two scripts that re-derive the synthetic labels from the rendered documents.
+- [`checks/`](checks/): two scripts that re-derive the synthetic labels from the rendered documents,
+  and `dedupe_images.py`, which checks the image training set against every evaluation image.
+- [`image/`](image/README.md): the builders of the image training set, with its sources,
+  licences and the hashes of record.
 - [`SHA256SUMS`](SHA256SUMS): the manifest that `recipe.sh` checks before the stages that
   need a recorded file.
 
