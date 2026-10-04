@@ -121,3 +121,30 @@ def test_v20_vl_is_v19_images_on_the_v20_soup_keeping_v20s_text_losses():
     assert _differing_keys(v20vl, v19img) == {"init_from", "init_revision", "text_replay_files",
                                               "kl_frozen_skip_kinds", "output_dir"}
     assert v20vl["kl_frozen_skip_kinds"] == ["noul"] and v20vl["teacher_weight"] == 1.0
+
+
+BAKEOFF = ("qwen35-2b", "minicpm5-2b")
+
+
+def test_bakeoff_configs_differ_only_in_the_base():
+    ref = _load("configs", "experiments", "bakeoff", "qwen35-2b.yaml")
+    for name in BAKEOFF[1:]:
+        other = _load("configs", "experiments", "bakeoff", f"{name}.yaml")
+        assert _differing_keys(other, ref) == {"base_model", "base_revision", "lora_targets", "output_dir"}
+    # From the raw base, on v19-yn27b's data and losses
+    yn = _load("configs", "experiments", "v19-yn27b.yaml")
+    assert ref["continue_from"] is None and ref["init_from"] is None
+    assert ref["base_model"] == yn["base_model"] and ref["lora_targets"] == yn["lora_targets"]
+    same = {"train_files", "kl_frozen_weight", "kl_frozen_skip_kinds", "head_type", "pointer_dim", "lora_r",
+            "lora_alpha", "lr", "head_lr", "micro_batch_size", "grad_accum", "max_length", "seed"}
+    assert all(ref[k] == yn[k] for k in same)
+    assert ref["teacher_file"] == yn["teacher_file"]
+
+
+def test_v21_is_the_minicpm5_bakeoff_arm_for_the_same_full_epoch():
+    v21, arm = _load("configs", "experiments", "strands-decider-2.5B-minicpm-v21.yaml"), _load(
+        "configs", "experiments", "bakeoff", "minicpm5-2b.yaml")
+    v20 = _load("configs", "experiments", "strands-decider-2B-hobson-v20.yaml")
+    assert _differing_keys(v21, arm) == {"max_steps", "init_seed", "output_dir"}
+    assert (v21["max_steps"], v21["init_seed"]) == (v20["max_steps"], v20["init_seed"])
+    assert v21["continue_from"] is None and v21["base_revision"]
