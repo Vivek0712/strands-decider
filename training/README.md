@@ -92,6 +92,27 @@ under `/mnt/c`; reads across the boundary are slow enough to bottleneck loading.
 kernel needs the CUDA compiler). torch 2.7 matters: `fla` wants Triton 3.3, which torch
 2.6 does not ship.
 
+### Fused kernels and the step rate
+
+On a CUDA host, `training/install_fast_kernels.sh` installs flash-linear-attention and
+causal-conv1d for the installed torch and CUDA (a prebuilt causal-conv1d wheel when one
+matches, otherwise a source build with `nvcc`) and checks that transformers sees both.
+Without them every Gated DeltaNet layer runs transformers' reference PyTorch path, which
+is how every H200 run up to v21 trained. The fused path changes the numerics slightly, so
+use it for every arm of a comparison or for none. Measure before budgeting a stage:
+
+```bash
+training/install_fast_kernels.sh                       # or PY=/path/to/python training/...
+python training/bench_steps.py --config configs/next/stage-d/cell-000.yaml --steps 100
+torchrun --standalone --nproc_per_node=4 training/bench_steps.py --config ... --steps 100
+python training/bench_steps.py --config configs/next/stage-b/pilot-4b-base.yaml --steps 20   # the 4B load test
+```
+
+`bench_steps.py` trains the config for `--steps` optimizer steps into a scratch directory
+(validation off) and prints the rate the trainer logs at the last step (model load and the
+frozen-KL precompute excluded and reported apart), the peak memory, and whether the fused
+kernels were in use. `--set key=value` overrides any config field.
+
 ### Training on several GPUs
 
 `NGPU=8 training/recipe.sh all` runs the recipe on eight GPUs with the commands below. The same
