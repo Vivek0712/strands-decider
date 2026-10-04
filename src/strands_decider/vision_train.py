@@ -90,6 +90,12 @@ class VisionTrainConfig(YamlConfig):
     ablation_fraction: float = 0.0
     kl_frozen_weight: float = 0.3
     kl_only_weight: float = 1.0
+    # Row kinds ("noul", "choice", "score") the frozen-KL term is not applied to, as
+    # TrainConfig.kl_frozen_skip_kinds: the frozen torso reads yes/no near chance.
+    kl_frozen_skip_kinds: list[str] = field(default_factory=list)
+    # Replay rows that carry a `teacher` distribution (canonical option order) train toward
+    # (one-hot gold + teacher_weight * teacher) / (1 + teacher_weight).
+    teacher_weight: float = 1.0
     val_fraction: float = 0.03
 
     # images, resized as `VisionEngineConfig` resizes them at inference
@@ -218,6 +224,16 @@ class ImageCollator:
         with open(os.path.join(self.cfg.data_root, path), "rb") as fh:
             return fit_image(read_image(fh.read()), self.cfg.image_long_side, self.cfg.image_max_pixels)
 
+    def teacher_target(self, teacher: list[float], label: int, order: Any) -> torch.Tensor:
+        """(one-hot gold + w * teacher) / (1 + w), mapped onto the slots of this rendering."""
+        slots = list(order) if order is not None else list(range(len(teacher)))
+        dist = torch.zeros(24, dtype=torch.float32)
+        w = self.cfg.teacher_weight
+        for s, canonical in enumerate(slots):
+            dist[s] = w * float(teacher[canonical])
+        dist[label] += 1.0
+        return dist / dist.sum()
+
     def __call__(self, rows: list[Row], index: int = 0) -> dict[str, torch.Tensor]:
         # Each micro-batch draws from its own stream, so workers render it the same way.
         base = SystemOneCollator(self.tok, self.ccfg, train=self.train)
@@ -232,6 +248,8 @@ class ImageCollator:
         for r in rows:
             ex, n_img = Example.from_dict(r), len(r.get("images", []))
             order, question, label, target = base.draw(ex)
+            if self.train and r.get("teacher"):
+                target = self.teacher_target(r["teacher"], label, order)
             rq = render_question(question, option_order=order)
             prompt = expand_image_tokens(render_image_state(ex.state, n_img, self.family),
                                          counts[c : c + n_img], self.family) + rq.text
@@ -252,6 +270,7 @@ class ImageCollator:
             "n_slots": torch.tensor([len(r["options"]) for r in rows]),
             "weights": torch.tensor([0.0 if r.get("ablation") else 1.0 for r in rows]),
             "ablation": torch.tensor([bool(r.get("ablation")) for r in rows]),
+            "kl_skip": torch.tensor([r.get("kind") in self.cfg.kl_frozen_skip_kinds for r in rows]),
         })
         if any(t is not None for t in targets):
             out["label_dist"] = torch.stack([
@@ -300,6 +319,8 @@ def row_losses(model: VisionDeciderModel, batch: dict[str, torch.Tensor], kl_wei
             p = ref.exp().masked_fill(~valid, 0.0)
             per_row = (p * (ref - lp).masked_fill(~valid, 0.0)).sum(-1) * eligible.float()
             kl = torch.where(batch["ablation"], kl_only_weight, kl_weight) * per_row
+            if "kl_skip" in batch:
+                kl = kl * (~batch["kl_skip"]).to(kl.dtype)
     reset_positions(model.torso)
     return ce, kl, lp
 

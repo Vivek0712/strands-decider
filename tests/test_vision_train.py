@@ -240,3 +240,17 @@ def test_training_moves_the_adapter_and_head_and_saves_a_vision_checkpoint(ckpt,
         history = json.load(fh)
     assert [h["step"] for h in history if "ce" in h] == [1, 2, 3] and history[-1]["final"]
     assert VisionDeciderModel.load(out).config.image_temperature_by_kind == {}  # stale: reset
+
+
+def test_teacher_target_follows_the_slot_order_and_mixes_with_gold():
+    """A replay row's teacher distribution (canonical order) lands on the slots of this
+    rendering, mixed with the one-hot gold at teacher_weight."""
+    from strands_decider.vision_train import ImageCollator, VisionTrainConfig
+
+    col = object.__new__(ImageCollator)
+    col.cfg = VisionTrainConfig(teacher_weight=1.0)
+    # slot 0 shows canonical option 1, slot 1 shows canonical option 0; gold is canonical 1 -> slot 0
+    t = col.teacher_target([0.2, 0.8], label=0, order=[1, 0])
+    assert torch.allclose(t[:2], torch.tensor([(1.0 + 0.8) / 2, 0.2 / 2]))
+    assert torch.isclose(t.sum(), torch.tensor(1.0))
+    assert torch.all(t[2:] == 0)
