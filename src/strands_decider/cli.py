@@ -218,6 +218,22 @@ def calibrate_cmd(
     console.print("after:       ", result["after"])
 
 
+@app.command("soup", hidden=True)
+def soup_cmd(
+    checkpoints: list[str] = typer.Argument(..., help="Two or more runs from one initialisation."),
+    out: str = typer.Option(..., "--out", help="New checkpoint directory (must be empty)."),
+) -> None:
+    """Average checkpoints that share an initialisation into one (see strands_decider.soup).
+
+    The soup's calibration is reset to 1.0: calibrate it before serving.
+    """
+    from .soup import soup
+
+    record = soup(list(checkpoints), out)
+    console.print(f"[green]soup of {len(checkpoints)} -> {out}[/]: {record['method']}")
+    console.print("calibration reset to 1.0: run `strands-decider calibrate` on it")
+
+
 @app.command("eval", hidden=True)
 def eval_cmd(
     checkpoint: str = typer.Argument(...),
