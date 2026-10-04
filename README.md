@@ -254,6 +254,7 @@ official submission.
 | --- | --- | --- | --- |
 | [strands-decider-2B-hobson-v20](docs/models/strands-decider-2B-hobson-v20.md) | Qwen3.5-2B-Base, 2B | text | #1 strictly-2B text model |
 | [strands-decider-2B-hobson-v20-balanced](docs/models/strands-decider-2B-hobson-v20-balanced.md) | Qwen3.5-2B-Base, 2B | text and images | best text+image 2B candidate (the only 2B candidate on both boards); #2 on Image JevBench |
+| [strands-decider-2.5B-minicpm-v21](docs/models/strands-decider-2.5B-minicpm-v21.md) | MiniCPM5-2B, 2.5B | text | top 3 text |
 
 ## Why 2B?
 

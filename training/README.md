@@ -173,9 +173,10 @@ pairs (`evaluation/pair_eval.py`).
 **The candidate models** ([docs/models/](../docs/models/)): `TrainConfig` options serve
 their text recipes: `continue_from` (train an existing checkpoint's adapter and head,
 rather than a fresh head on a frozen torso as `init_from` does), `kl_frozen_skip_kinds` (no
-frozen-KL term on the listed row kinds) and `init_seed` (seed the initialisation apart from
-the data order, so seeds can be averaged with `strands-decider soup`), with
-`recipe.sh teacher_yn`. Image fine-tuning has its own trainer,
+frozen-KL term on the listed row kinds), `init_seed` (seed the initialisation apart from the
+data order, so seeds can be averaged with `strands-decider soup`) and `base_revision` (pin
+the base, which may be a Qwen3.5 or a Llama-family decoder such as MiniCPM5),
+with `recipe.sh teacher_yn`. Image fine-tuning has its own trainer,
 `python -m strands_decider.vision_train`, driven end to end by `training/recipe_images.sh`.
 
 The steps, each with its command, are in [steps.md](steps.md):
