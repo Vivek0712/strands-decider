@@ -1,4 +1,42 @@
 {
+ "comp-decider-2b": {
+  "t_fixA": {
+   "noul": 1.0,
+   "choice": 1.0,
+   "score": 1.0
+  },
+  "unseen_I_cur": 21.00668829092771,
+  "unseen_I_fixA": 21.00668829092771,
+  "unseen_types": {
+   "noul": -76.4,
+   "choice": 73.76344086021504,
+   "score": 65.65662401256809
+  },
+  "public_I_cur": null,
+  "public_I_fixA": null,
+  "unseen_ece_cur": 0.053420568048608265,
+  "unseen_ece_fixA": 0.053420568048608265,
+  "yn_over": 0.10767240000000004
+ },
+ "comp-decision-2b": {
+  "t_fixA": {
+   "noul": 1.0,
+   "choice": 1.0,
+   "score": 1.0
+  },
+  "unseen_I_cur": 20.185319666120627,
+  "unseen_I_fixA": 20.185319666120627,
+  "unseen_types": {
+   "noul": -57.60000000000001,
+   "choice": 60.43010752688172,
+   "score": 57.72585147148017
+  },
+  "public_I_cur": null,
+  "public_I_fixA": null,
+  "unseen_ece_cur": 0.105187178118807,
+  "unseen_ece_fixA": 0.105187178118807,
+  "yn_over": 0.16527104692454486
+ },
  "eyes-s0": {
   "t_fixA": {
    "noul": 0.5608428296613732,

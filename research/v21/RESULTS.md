@@ -78,8 +78,10 @@ ARC-Challenge 150 (choice), STS-B 250 (score, 6 levels). Same v1.5-style scoring
 | v21 s1 | 46.2 | 23.8 → 27.5 | −18.7 | −14.8 / 52.6 / 44.7 | 0.120 → 0.085 | +0.138 |
 | v21 s2 | 44.2 | 22.6 → 26.6 | −17.6 | −23.2 / 57.8 / 45.3 | 0.115 → 0.095 | +0.129 |
 | v19 | 34.2 | 20.3 → 23.6 | −10.6 | −40.8 / 60.4 / 51.1 | 0.073 → **0.043** | +0.073 |
-| decider-2b (Mapika, official 2B Intelligence 42.3) | — | _pending_ | | | | |
-| decision-2b (FlyMy, official 2B Capability 58.8) | — | _pending_ | | | | |
+| decider-2b (Mapika; official I 42.3, 2B #1 on Intelligence) | — | 21.0 | — | −76.4 / **73.8** / **65.7** | 0.053 | +0.108 |
+| decision-2b (FlyMy; official Capability 58.8, 2B #1 on Capability) | — | 20.2 | — | −57.6 / 60.4 / 57.7 | 0.105 | +0.165 |
+
+Competitors were run locally with their own published code and calibration (`comp_run.py`: Mapika `decider.infer.Decider.system_one`, FlyMy `model.load().decide`), same 1,050 rows. Their ordering here (decider-2b 21.0 > decision-2b 20.2) matches the official board's Intelligence ordering (42.3 > 31.3). **Every trained model of ours scores above both on these unseen families** (+2.6 to +14.5): we win on yes/no (they hedge or are wrong on StrategyQA/RuleTaker-d5), they win on choice and score (decider-2b 73.8 / 65.7 vs our best 64.7 / 51.1).
 
 Read: on families nobody trained on, the Qwen v20-long soup leads and loses least (−8 vs −17…−21 for every
 MiniCPM5 model): MiniCPM5's public lead is largely familiarity with the public task formats. Everyone's unseen
@@ -126,7 +128,8 @@ Per run — combined Qwen: NB 0.796/0.807/0.800, POPE 0.877/0.872/0.882, preview
 
 | Model | Text I (v1.5-style) | NB | POPE | Preview | Image-removed | Verdict |
 |---|---|---|---|---|---|---|
-| combined Qwen | 29.3 | 0.801 | 0.877 | 40.7 | fixed | images ≥ v19, text ≈ v19 (image stage undid the text gain) |
+| **combined Qwen, fixed** (3 runs) | **39.0** (39.4 / 39.0 / 38.7; proxy 42.9 / 42.2 / 41.7; hedged 35–36) | **0.802** | 0.874 | **42.0** | mostly (0.60 / 0.58) | **best one-checkpoint model: text ≈ v20-long, images ≈ best, true 2B** |
+| combined Qwen (first attempt) | 29.3 | 0.801 | 0.877 | 40.7 | fixed | images ≥ v19, text ≈ v19 (image stage undid the text gain) |
 | v19 + `--vision` | 29.5 | 0.787 | 0.858 | 40 | not fixed | baseline |
 | MiniCPM5 + eyes (+ Fix A) | 51.3 | 0.679 | 0.818 | 16 | partly | best text, weak images |
 | Gemma text + images | 10.0 | 0.729 | 0.836 | 27 | not fixed | weakest |
@@ -149,10 +152,9 @@ Fix: `kl_frozen_skip_kinds: [noul]` + replay rows with 27B-teacher targets (bran
   4608→2048→2048; stage 1 on 80,000 COCO train2014 captions, 621 steps, 694 s, val loss 1.87; stage 2 from the
   v21 soup, variant A.
 
-## 8. Still running when this was written (machine B, 4×H200 NVL 54074831)
+## 8. Fixed combined Qwen (finished 2026-10-04 05:04Z)
 
-- Fixed combined Qwen: seed 0 (GPU3), seeds 1-2 (GPUs 0-1), each scored on images and JevBench text.
-- decider-2b and decision-2b on the unseen set (§3), each with its own published code and calibration.
+Per run — text v1.5-style 39.4 / 39.0 / 38.7 (175 / 169 / 173 right, hedged 36 / 35 / 36, ECE 0.041 / 0.051 / 0.033); NB 0.802 / 0.799 / 0.804, G-Acc 0.360 / 0.373 / 0.367, NB ECE 0.089 / 0.080 / 0.085 (worse than the first attempt's 0.023 — image temperatures not applied in this table), POPE 0.865 / 0.875 / 0.882, preview 43 / 43 / 40, image-removed confidence 0.61 / 0.60 / 0.60 (NB) and 0.59 / 0.58 / 0.56 (POPE), text check 0.829 / 0.828 / 0.825. The fix (no yes/no frozen-KL + 27B-teacher replay) restored the text gain (29.3 → 39.0) with images unchanged. Not yet run on the unseen set (machine destroyed after verified upload; checkpoints in S3 machineB/).
 
 ## 9. Data, code, compute
 
