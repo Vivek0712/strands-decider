@@ -175,7 +175,8 @@ their text recipes: `continue_from` (train an existing checkpoint's adapter and 
 rather than a fresh head on a frozen torso as `init_from` does), `kl_frozen_skip_kinds` (no
 frozen-KL term on the listed row kinds) and `init_seed` (seed the initialisation apart from
 the data order, so seeds can be averaged with `strands-decider soup`), with
-`recipe.sh teacher_yn`.
+`recipe.sh teacher_yn`. Image fine-tuning has its own trainer,
+`python -m strands_decider.vision_train`, driven end to end by `training/recipe_images.sh`.
 
 The steps, each with its command, are in [steps.md](steps.md):
 [1. Build the corpora](steps.md#1-build-the-corpora),
