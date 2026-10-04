@@ -182,6 +182,11 @@ It matches an image-trained 2B decider on accuracy, and on NaturalBench is much 
 calibrated (ECE 0.014 against 0.080); see [docs/vision.md](docs/vision.md) for the request shape,
 how it works and the measurements.
 
+[docs/v20-v21.md](docs/v20-v21.md) describes four exploratory candidate checkpoints, none of
+them a published release: v20 (v19 continued with a 27B yes/no teacher), v21 (the same
+recipe on a MiniCPM5-2B base), and an image-trained version of each, with the configs and
+the commands to train, calibrate, evaluate and serve them.
+
 ## About the model
 
 `strands-decider-2B`, the first model of the family, has 1.9 billion parameters. It answers a
