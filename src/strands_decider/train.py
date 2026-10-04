@@ -21,7 +21,7 @@ import os
 import random
 import time
 from dataclasses import asdict, dataclass, field
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 import torch
 from torch.nn.utils.rnn import pad_sequence
@@ -50,6 +50,23 @@ class YamlConfig:
         if unknown:
             raise ValueError(f"unknown config keys: {sorted(unknown)}")
         return cls(**raw)
+
+    def with_overrides(self: C, pairs: list[str]) -> C:
+        """A copy with `key=value` overrides applied (values read as YAML), refusing keys
+        the config does not define."""
+        import dataclasses
+
+        import yaml
+
+        known = set(getattr(self, "__dataclass_fields__", {}))
+        over: dict[str, Any] = {}
+        for pair in pairs:
+            key, sep, value = pair.partition("=")
+            if not sep or key not in known:
+                raise SystemExit(f"not a key=value override of a config field: {pair!r}")
+            over[key] = yaml.safe_load(value)
+        return cast(C, dataclasses.replace(cast(Any, self), **over))
+
 
 @dataclass
 class TrainConfig(YamlConfig):
