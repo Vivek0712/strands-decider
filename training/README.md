@@ -143,7 +143,7 @@ as shipped, changes it by 0.44.
 
 `training/recipe.sh` builds, trains and evaluates the default, v19, end to end under WSL2; pass
 one or more step names (`build`, `fetch`, `multistep`, `generated`, `adequacy`,
-`catchall`, `teacher`, `distill`, `parent`, `replay`, `train`, `calibrate`, `eval`) to run
+`catchall`, `teacher`, `distill`, `teacher_yn`, `parent`, `replay`, `train`, `calibrate`, `eval`) to run
 those. It trains twice: a parent on v14's recipe (`configs/train-parent.yaml`), whose
 answers on the multi-step rows become the targets for v19 (`configs/train.yaml`) — about
 11 h in all. `training/recipe_v7.sh` does the same for v7 on Windows.
