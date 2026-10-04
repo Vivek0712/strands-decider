@@ -9,7 +9,17 @@ Shared by every test that needs a Qwen3.5 torso.
 
 from __future__ import annotations
 
+import re
+
+import pytest
 import torch
+import transformers
+
+# The tiny Qwen3.5 (and image input) need transformers >= 5.18; the package needs 5.15.
+needs_tiny_qwen35 = pytest.mark.skipif(
+    tuple(int(x) for x in re.findall(r"\d+", transformers.__version__)[:2]) < (5, 18),
+    reason="the tiny Qwen3.5 needs transformers >= 5.18",
+)
 
 VISION_TOKENS = ("<|vision_start|>", "<|image_pad|>", "<|vision_end|>")
 TARGETS = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj",
