@@ -15,6 +15,9 @@ v18 preregistrations record the decision in Decision after the outcome. The curr
 - [`generations.md`](generations.md): the dated ledger, one entry per generation from v1 to
   v19, with the files each came from. It was written from the private development
   history, which is not in this repository.
+- [`next/STAGE_A.md`](next/STAGE_A.md): the next-model plan's engineering stage (unseen-v2,
+  the A1/A2/A3 recipe changes, the stage configs) and the commands and fixed decision rules
+  for Stages B to E.
 - [`data/`](data/): the saved per-case results, as CSV.
 - [`figures/`](figures/) and [`scripts/`](scripts/): the figures, and the scripts that collect
   the results and draw them.

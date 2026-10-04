@@ -38,6 +38,8 @@ revisions, licences and file hashes are in [data/sources.md](../../data/sources.
 | [`factorial.py`](factorial.py) | Stage D: the main effect of each arm of the 2³ factorial and the pre-registered decision |
 | [`rank_check.py`](rank_check.py), [`adapters.py`](adapters.py), [`systems.json`](systems.json) | Stage C: public board systems answer unseen-v2 through `unseen/run.py`'s adapters, evaluation only |
 | [`spearman.py`](spearman.py), [`official_v1.5.5.csv`](official_v1.5.5.csv) | Stage C gate: Spearman of our unseen-v2 Intelligence against the official sealed-half order, with an item-bootstrap interval |
+| [`interpolate.py`](interpolate.py) | Stage E: NLL and unseen-v2 measures along the line between two seeds (weighted soups); soup only if there is no barrier |
+| [`calibrate_mixed.py`](calibrate_mixed.py) | Stage E: per-kind temperatures by NLL on 50/50 in-family held-out and unseen-v2 dev rows, into a copy of the checkpoint |
 
 ```bash
 pip install "strands-decider[unseen]"     # datasets and python-chess
