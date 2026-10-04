@@ -1,0 +1,164 @@
+{
+ "v21-s0": {
+  "t_yesno_current": 0.818,
+  "t_yesno_balanced": 0.2231,
+  "t_yesno_nll": 1.3499,
+  "heldout_check_obj(cur/bal/nll)": [
+   45.8,
+   48.2,
+   31.8
+  ],
+  "jev_I(cur->bal)": [
+   51.5,
+   63.2
+  ],
+  "jev_band(cur->bal)": [
+   21,
+   2
+  ],
+  "jev_ece_top(cur->bal)": [
+   0.0868,
+   0.1156
+  ],
+  "t_all_balanced": {
+   "noul": 0.2231,
+   "choice": 0.8607,
+   "score": 1.0779
+  }
+ },
+ "v21-s1": {
+  "t_yesno_current": 0.911,
+  "t_yesno_balanced": 0.2466,
+  "t_yesno_nll": 1.284,
+  "heldout_check_obj(cur/bal/nll)": [
+   47.2,
+   51.9,
+   39.0
+  ],
+  "jev_I(cur->bal)": [
+   51.2,
+   60.2
+  ],
+  "jev_band(cur->bal)": [
+   28,
+   8
+  ],
+  "jev_ece_top(cur->bal)": [
+   0.0673,
+   0.0869
+  ],
+  "t_all_balanced": {
+   "noul": 0.2466,
+   "choice": 0.8187,
+   "score": 1.0253
+  }
+ },
+ "v21-s2": {
+  "t_yesno_current": 1.014,
+  "t_yesno_balanced": 0.4607,
+  "t_yesno_nll": 1.3165,
+  "heldout_check_obj(cur/bal/nll)": [
+   42.7,
+   47.8,
+   36.0
+  ],
+  "jev_I(cur->bal)": [
+   48.7,
+   56.9
+  ],
+  "jev_band(cur->bal)": [
+   32,
+   13
+  ],
+  "jev_ece_top(cur->bal)": [
+   0.1109,
+   0.0868
+  ],
+  "t_all_balanced": {
+   "noul": 0.4607,
+   "choice": 0.8187,
+   "score": 1.1052
+  }
+ },
+ "v21-soup": {
+  "t_yesno_current": 0.561,
+  "t_yesno_balanced": 0.2288,
+  "t_yesno_nll": 0.7225,
+  "heldout_check_obj(cur/bal/nll)": [
+   45.5,
+   51.4,
+   39.3
+  ],
+  "jev_I(cur->bal)": [
+   49.1,
+   59.0
+  ],
+  "jev_band(cur->bal)": [
+   31,
+   9
+  ],
+  "jev_ece_top(cur->bal)": [
+   0.0854,
+   0.0918
+  ],
+  "t_all_balanced": {
+   "noul": 0.2288,
+   "choice": 0.4493,
+   "score": 0.6065
+  }
+ },
+ "bakeoff-minicpm5": {
+  "t_yesno_current": 1.014,
+  "t_yesno_balanced": 0.2231,
+  "t_yesno_nll": 1.4191,
+  "heldout_check_obj(cur/bal/nll)": [
+   41.4,
+   49.0,
+   33.6
+  ],
+  "jev_I(cur->bal)": [
+   48.5,
+   63.8
+  ],
+  "jev_band(cur->bal)": [
+   30,
+   2
+  ],
+  "jev_ece_top(cur->bal)": [
+   0.0868,
+   0.0711
+  ],
+  "t_all_balanced": {
+   "noul": 0.2231,
+   "choice": 0.9048,
+   "score": 1.384
+  }
+ },
+ "v19": {
+  "t_yesno_current": 0.911,
+  "t_yesno_balanced": 0.2231,
+  "t_yesno_nll": 0.9512,
+  "heldout_check_obj(cur/bal/nll)": [
+   29.2,
+   45.9,
+   28.1
+  ],
+  "jev_I(cur->bal)": [
+   32.1,
+   52.0
+  ],
+  "jev_band(cur->bal)": [
+   48,
+   11
+  ],
+  "jev_ece_top(cur->bal)": [
+   0.0501,
+   0.0908
+  ],
+  "t_all_balanced": {
+   "noul": 0.2231,
+   "choice": 0.8187,
+   "score": 0.6703
+  }
+ }
+}

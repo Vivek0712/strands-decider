@@ -1,0 +1,27 @@
+{
+ "v21-s0": {
+  "noul": 0.8177,
+  "choice": 0.8607,
+  "score": 1.0779
+ },
+ "v21-s1": {
+  "noul": 0.9107,
+  "choice": 0.8187,
+  "score": 1.0253
+ },
+ "v21-s2": {
+  "noul": 1.0143,
+  "choice": 0.8187,
+  "score": 1.1052
+ },
+ "v21-soup": {
+  "noul": 0.5608,
+  "choice": 0.4493,
+  "score": 0.6065
+ },
+ "bakeoff-minicpm5": {
+  "noul": 1.0143,
+  "choice": 0.9048,
+  "score": 1.384
+ }
+}
