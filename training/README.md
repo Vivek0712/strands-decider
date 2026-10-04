@@ -178,6 +178,10 @@ data order, so seeds can be averaged with `strands-decider soup`) and `base_revi
 the base, which may be a Qwen3.5 or a Llama-family decoder such as MiniCPM5),
 with `recipe.sh teacher_yn`. Image fine-tuning has its own trainer,
 `python -m strands_decider.vision_train`, driven end to end by `training/recipe_images.sh`.
+A MiniCPM5 checkpoint, which has no vision tower,
+gets grafted eyes in two stages (`python -m strands_decider.graft_align`, then
+`vision_train` with `projector_from`), driven by `training/recipe_minicpm_vision.sh`
+([docs/vision.md](../docs/vision.md#a-torso-without-a-vision-tower-grafted-eyes-minicpm5)).
 
 The steps, each with its command, are in [steps.md](steps.md):
 [1. Build the corpora](steps.md#1-build-the-corpora),
