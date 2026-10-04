@@ -1,11 +1,12 @@
-"""The local scorers of evaluation/: the JevBench v1.5-rule proxy (jevbench/v15_proxy.py).
-Standard library and synthetic rows."""
+"""The local scorers of evaluation/: the JevBench v1.5-rule proxy (jevbench/v15_proxy.py)
+and the paired image comparison (vision/compare.py). Standard library and synthetic rows."""
 from __future__ import annotations
 
 import json
 
 import pytest
 from jevbench import v15_proxy as P
+from vision import compare as C
 
 
 def _yn(task: str, p_yes: float, correct: bool, family: str = "policy") -> dict:
@@ -91,3 +92,22 @@ def test_paired_bootstrap_vs_a_baseline():
     with pytest.raises(ValueError):
         P.paired_bootstrap([base[:-1]], [base], resamples=10)
 
+
+def _nb(group: int, rights: list[bool], blind_conf: float = 0.5) -> list[dict]:
+    rows = []
+    for k, ok in enumerate(rights):
+        rows.append({"id": f"nb-{group}-{k}", "bench": "naturalbench", "group": group, "q": k // 2, "i": k % 2,
+                     "gold": 0 if ok else 1, "probs": [0.7, 0.3]})
+    return rows
+
+
+def test_image_comparison_counts_groups_and_items():
+    # group 2 is incomplete (3 of its 4 answers), so G-Acc leaves it out
+    arm = {"naturalbench": _nb(0, [True] * 4) + _nb(1, [True, True, True, False]) + _nb(2, [True] * 3)}
+    base = {"naturalbench": _nb(0, [True, False, True, True]) + _nb(1, [True, False, False, False])
+            + _nb(2, [False] * 3)}
+    got = C.paired_bootstrap([arm], [base], resamples=200)
+    assert got["naturalbench_acc"]["diff"] == round(10 / 11 - 4 / 11, 4)
+    assert got["naturalbench_g_acc"]["diff"] == pytest.approx(0.5)  # group 0 all right only in the arm
+    same = C.paired_bootstrap([arm], [arm], resamples=50)
+    assert same["naturalbench_g_acc"] == {"diff": 0.0, "ci95": [0.0, 0.0]}
