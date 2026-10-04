@@ -1,0 +1,60 @@
+# Stage B, the 4B pilot (research/next/STAGE_A.md): does a 4B torso earn its cost? Three
+# configs, identical but for the base (tests/test_next_configs.py holds that): the base
+# bake-off's from-raw recipe (configs/experiments/bakeoff/qwen35-2b.yaml: v19-yn27b's data
+# and losses) for 1,500 steps, on
+#   pilot-4b-base.yaml      Qwen/Qwen3.5-4B-Base, pinned
+#   pilot-4b-instruct.yaml  Qwen/Qwen3.5-4B, the post-trained model (spark and lev start there)
+#   pilot-2b-base.yaml      Qwen/Qwen3.5-2B-Base: the schedule-matched 2B reference
+# Gate, fixed before the run: go to 4B only if the better 4B arm scores >= +5 public
+# v1.5-style Intelligence over the 2B from raw and is not worse on unseen-v2 (paired).
+# Run a 20-step load test first (training/bench_steps.py --steps 20), which also measures
+# the 4B step rate with the fused kernels.
+#
+# This arm: Qwen3.5-4B-Base (32 layers: 24 Gated DeltaNet + 8 attention), Apache-2.0.
+
+train_files: ["data/train_v5.jsonl", "data/multistep_v14.jsonl", "data/generated_v16.jsonl",
+              "data/generated_v18.jsonl", "data/adequacy_hs2.jsonl", "data/adequacy_gen.jsonl"]
+val_fraction: 0.03
+
+base_model: "Qwen/Qwen3.5-4B-Base"
+base_revision: "1001bb4d826a52d1f399e183466143f4da7b741b"
+num_slots: 24           # must match `data build --max-options`; also the KL reference width
+head_type: "pointer"    # scores each option from its own hidden state; see modeling.PointerHead
+pointer_dim: 256
+head_init: "random"
+kl_frozen_weight: 0.3   # KL(frozen || student) over the option-number readout...
+kl_frozen_skip_kinds: ["noul"]   # ...except on yes/no rows
+teacher_file: "data/teacher_yn_qwen35-27b.jsonl"
+teacher_weight: 1.0
+head_dropout: 0.05
+max_length: 4096
+
+use_lora: true
+lora_r: 16
+lora_alpha: 32
+# Attention and MLP projections, plus the recurrent layers' own (as v19).
+lora_targets: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj",
+               "in_proj_qkv", "in_proj_z", "in_proj_a", "in_proj_b", "out_proj"]
+freeze_torso: false
+
+epochs: 1
+max_steps: 1500         # the pilot's fixed budget
+micro_batch_size: 8
+grad_accum: 4           # effective batch 32
+lr: 0.0001              # LoRA
+head_lr: 0.001          # randomly-initialised head needs a bigger step
+weight_decay: 0.01
+warmup_ratio: 0.03
+max_grad_norm: 1.0
+gradient_checkpointing: true
+precompute_frozen_kl: true   # speed only
+
+shuffle_options: true
+group_by_length: true
+ordinal_smoothing: 0.1
+reverse_score_prob: 0.5
+
+output_dir: "checkpoints/next-b-pilot-4b-base"
+seed: 0
+log_every: 20
+eval_every: 500

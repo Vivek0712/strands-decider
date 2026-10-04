@@ -359,3 +359,19 @@ def test_adapters_normalise_answer_shapes():
     assert A.normalise({"distribution": [0.2, 0.2, 0.6]}, sc)["probabilities"]["2"] == pytest.approx(0.6)
     with pytest.raises(ValueError):
         A.normalise({"distribution": [1.0]}, sc)
+
+
+def test_stage_e_calibration_mix_is_half_in_family_half_unseen_per_kind():
+    from types import SimpleNamespace as NS
+
+    from unseen_v2 import calibrate_mixed as CM
+
+    unseen = [NS(kind=k, i=i) for k in ("noul", "choice") for i in range(50)]
+    fam = {"a": [NS(kind="noul", i=i) for i in range(30)] + [NS(kind="score", i=i) for i in range(9)],
+           "b": [NS(kind="noul", i=i) for i in range(40)] + [NS(kind="choice", i=i) for i in range(12)]}
+    ours, theirs = CM.mix(fam, unseen, per_kind=40)
+    for kind in ("noul", "choice", "score"):
+        assert sum(e.kind == kind for e in ours) == sum(e.kind == kind for e in theirs)
+    assert sum(e.kind == "noul" for e in ours) == 40 and sum(e.kind == "choice" for e in ours) == 12
+    assert not any(e.kind == "score" for e in ours)  # no unseen score rows to match them
+    assert CM.mix(fam, unseen, per_kind=40) == (ours, theirs)
