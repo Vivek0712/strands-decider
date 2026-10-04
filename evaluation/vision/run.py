@@ -16,8 +16,9 @@ JevBench preview items, optional, rebuilt from their source datasets by a separa
 builder (README.md; only the 60 "exact" items are faithful, and the official Image
 JevBench set is not downloadable).
 
-`--checkpoint` may be any Strands Decider checkpoint that `serve --vision` loads: v19, or an
-image-trained one; images are processed by its own pinned PIL processor.
+`--checkpoint` may be any Strands Decider checkpoint that `serve --vision` loads: v19, an
+image-trained one, or a grafted one (strands_decider.graft); images are processed by its
+own pinned PIL processor.
 
 Every item is one question about one image, so each is forwarded whole (state + question);
 `VisionEngine`'s shared-prefix path gives the same probabilities to < 1e-5
@@ -53,7 +54,7 @@ from strands_decider.infer import _option_token_index
 from strands_decider.modeling import StrandsDeciderConfig, masked_log_softmax
 from strands_decider.prompting import render_question
 from strands_decider.schema import ChoiceQuestion, NoulQuestion, Question
-from strands_decider.vision import ImagePrompt, VisionDeciderModel, fit_image
+from strands_decider.vision import ImagePrompt, VisionDeciderModel, fit_image, load_vision_model
 
 # Every download is pinned to the revision the published results were measured on.
 V19, V19_REV = "StrandsAgents/strands-decider-2B-hobson-v19", "bb282d786bc251fd4e3068de3ada9ddbb38127cd"
@@ -207,7 +208,9 @@ class Strands(_DeciderSystem):
         if checkpoint == V19:
             checkpoint = snapshot_download(V19, revision=V19_REV)
         self.device = device
-        self.model = VisionDeciderModel.load(checkpoint).to(torch.float32).to(device).eval()
+        # Qwen3.5's own tower, or a grafted encoder (strands_decider.graft) when the
+        # checkpoint holds a projector
+        self.model = load_vision_model(checkpoint).to(torch.float32).to(device).eval()
         super().__init__(self.model.image_prompt())
         cfg = self.model.config
         # Questions over an image take the image temperatures (the checkpoint's, or

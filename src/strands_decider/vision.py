@@ -491,7 +491,7 @@ class VisionEngine(SystemOneEngine):
 
     def __init__(
         self,
-        model: VisionDeciderModel,
+        model: StrandsDeciderModel,
         config: VisionEngineConfig | None = None,
         image_processor: Any = None,
     ):
@@ -500,7 +500,7 @@ class VisionEngine(SystemOneEngine):
             self.cfg if isinstance(self.cfg, VisionEngineConfig) else VisionEngineConfig()
         )
         # The model's own image prompt, its processor pinned (see `load_image_processor`).
-        self.prompter: ImagePrompt = model.image_prompt(image_processor)
+        self.prompter: ImagePrompt = cast(Any, model).image_prompt(image_processor)
         self.image_processor = self.prompter.processor
 
     def _reset_positions(self) -> None:
@@ -508,7 +508,7 @@ class VisionEngine(SystemOneEngine):
         # `rope_deltas` stored on the torso by any earlier plain image forward (a
         # training or evaluation step on the same model). The image path below passes
         # positions explicitly and stores none.
-        cast(VisionDeciderModel, self.model).reset_positions()
+        cast(Any, self.model).reset_positions()
 
     def evaluate(self, request: SystemOneRequest) -> SystemOneResponse:
         self._reset_positions()
@@ -629,13 +629,18 @@ class VisionEngine(SystemOneEngine):
             suffix_ids, full_mask, past_key_values=cache,
             position_ids=torch.cat([st, (st + delta).expand(3, m, -1)], dim=0),
         )
+        return self._readout(hidden, full_mask, rendered), n + int(suffix_mask.sum().item())
+
+    def _readout(self, hidden: torch.Tensor, full_mask: torch.Tensor,
+                 rendered: list[RenderedQuestion]) -> torch.Tensor:
+        """Option probabilities from the question suffixes' hidden states."""
         pooled = pool_last_token(hidden, full_mask).to(torch.float32)
         options = gather_options(hidden, self._option_idx(rendered, 0)).to(torch.float32)
         head: Any = self.model.head
         logits = apply_temperature(head(pooled, options),
                                    self._image_temperatures([rq.kind for rq in rendered]))
         probs = masked_log_softmax(logits, torch.tensor([rq.n_slots for rq in rendered], device=self.device))
-        return probs.exp(), n + int(suffix_mask.sum().item())
+        return probs.exp()
 
 
 def load_vision_engine(
@@ -652,6 +657,30 @@ def load_vision_engine(
     names = {f.name for f in fields(EngineConfig)}
     cfg = VisionEngineConfig(**{k: v for k, v in asdict(base).items() if k in names},
                              image_long_side=image_long_side, image_max_pixels=image_max_pixels)
+    if is_grafted(checkpoint):
+        from .graft import GraftedDeciderModel, GraftedVisionEngine
+
+        grafted = GraftedDeciderModel.load(checkpoint, attn_implementation=attn_implementation)
+        return GraftedVisionEngine(grafted, cfg)
     model = VisionDeciderModel.load(checkpoint, attn_implementation=attn_implementation)
     return VisionEngine(model, cfg)
 
+
+def is_grafted(checkpoint: str) -> bool:
+    """True for a checkpoint whose eyes are a grafted encoder and projector (graft.py)
+    rather than the base's own vision tower."""
+    from .graft import PROJECTOR_CONFIG
+
+    return os.path.exists(os.path.join(checkpoint_dir(checkpoint), PROJECTOR_CONFIG))
+
+
+def load_vision_model(checkpoint: str, *, trainable: bool = False, **kwargs: Any) -> Any:
+    """The vision model a checkpoint names: a `VisionDeciderModel` (the base's own tower)
+    or a `GraftedDeciderModel` (graft.py). Both take `pixel_values` (and whatever else
+    their `image_prompt().process` returns) in `forward`, and have `image_prompt` and
+    `reset_positions`."""
+    if is_grafted(checkpoint):
+        from .graft import GraftedDeciderModel
+
+        return GraftedDeciderModel.load(checkpoint, trainable=trainable, **kwargs)
+    return VisionDeciderModel.load(checkpoint, trainable=trainable, **kwargs)

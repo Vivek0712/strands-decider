@@ -344,7 +344,8 @@ def serve_cmd(
     ),
     vision: bool = typer.Option(
         False, "--vision",
-        help="Keep Qwen3.5's vision tower so requests may carry `images` (docs/vision.md).",
+        help="Keep the base's vision tower (Qwen3.5), or load a checkpoint's grafted "
+        "encoder and projector, so requests may carry `images` (docs/vision.md).",
     ),
     max_batch: int = typer.Option(
         32, "--max-batch", help="Questions encoded per forward pass; lower it for very long states.",
