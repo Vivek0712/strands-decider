@@ -181,3 +181,39 @@ def test_runs_continued_from_one_checkpoint_soup(runs, tmp_path):
         paths.append(p)
     soup_mod.soup(paths, str(tmp_path / "soup"))
     assert soup_mod.init_identity(str(tmp_path / "soup")) == {"continue_from": "checkpoints/v19"}
+
+
+def test_a_weighted_soup_is_the_point_on_the_line_between_two_runs(runs, tmp_path):
+    a, b = runs[0], runs[1]
+    t = 0.25
+    soup_mod.soup([a, b], str(tmp_path / "w"), coefs=[1 - t, t])
+    da, db, dw = _delta(a), _delta(b), _delta(str(tmp_path / "w"))
+    for k in da:
+        assert torch.allclose(dw[k], (1 - t) * da[k] + t * db[k], atol=1e-6)
+    ha, hb = torch.load(os.path.join(a, "slot_head.pt")), torch.load(os.path.join(b, "slot_head.pt"))
+    hw = torch.load(os.path.join(tmp_path / "w", "slot_head.pt"))
+    assert all(torch.allclose(hw[k], (1 - t) * ha[k] + t * hb[k], atol=1e-6) for k in ha)
+    soup_mod.soup([a, b], str(tmp_path / "end"), coefs=[1.0, 0.0])
+    assert torch.allclose(_logits(str(tmp_path / "end")), _logits(a), atol=1e-5)  # t = 0 is run A
+    with pytest.raises(ValueError, match="summing to 1"):
+        soup_mod.soup([a, b], str(tmp_path / "bad"), coefs=[0.5, 0.6])
+
+
+def test_interpolation_reports_the_barrier_and_the_rule(runs, tmp_path):
+    import sys
+
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "evaluation"))
+    from unseen_v2 import interpolate as I
+
+    curve = [{"t": 0.0, "nll": 1.0}, {"t": 0.5, "nll": 1.3}, {"t": 1.0, "nll": 1.2}]
+    assert I.barrier(curve) == pytest.approx(0.2)
+    assert I.barrier([{"t": 0.0, "nll": 1.0}, {"t": 0.5, "nll": 0.9}, {"t": 1.0, "nll": 1.0}]) < 0
+    rows = tmp_path / "rows.jsonl"
+    exs = [Example("choice", f"Ticket {k}: refund.", "Which team?", [["billing", ""], ["sales", ""]], k % 2,
+                   task="unseen/x") for k in range(6)]
+    rows.write_text("".join(json.dumps({**json.loads(e.to_json()), "split": "dev"}) + "\n" for e in exs))
+    I.main([runs[0], runs[1], "--rows", str(rows), "--points", "0.5", "--device", "cpu",
+            "--json", str(tmp_path / "i.json")])
+    rep = json.loads((tmp_path / "i.json").read_text())
+    assert [p["t"] for p in rep["curve"]] == [0.0, 0.5, 1.0] and rep["rows"] == 6
+    assert rep["soup"] == (rep["barrier_nll"] <= 0)

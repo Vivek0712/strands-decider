@@ -116,13 +116,19 @@ def _check(paths: list[str], configs: list[StrandsDeciderConfig],
             raise ValueError("per-module rank_pattern / alpha_pattern adapters are not supported")
 
 
-def _mean(tensors: list[torch.Tensor]) -> torch.Tensor:
-    out = torch.stack([t.to(torch.float64) for t in tensors]).mean(dim=0)
+def _mean(tensors: list[torch.Tensor], coefs: list[float] | None = None) -> torch.Tensor:
+    """The mean, or with `coefs` (summing to 1) the weighted mean, in float64."""
+    stacked = torch.stack([t.to(torch.float64) for t in tensors])
+    if coefs is None:
+        out = stacked.mean(dim=0)
+    else:
+        w = torch.tensor(coefs, dtype=torch.float64).view(-1, *([1] * (stacked.dim() - 1)))
+        out = (stacked * w).sum(dim=0)
     return out.to(tensors[0].dtype)
 
 
-def soup_head(states: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tensor]:
-    """The element-wise mean of each head tensor."""
+def soup_head(states: list[dict[str, torch.Tensor]], coefs: list[float] | None = None) -> dict[str, torch.Tensor]:
+    """The element-wise mean (or `coefs`-weighted mean) of each head tensor."""
     keys = set(states[0])
     for s in states[1:]:
         if set(s) != keys:
@@ -132,14 +138,16 @@ def soup_head(states: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tensor]:
         ts = [s[k] for s in states]
         if any(t.shape != ts[0].shape for t in ts):
             raise ValueError(f"head tensor {k} differs in shape")
-        out[k] = _mean(ts)
+        out[k] = _mean(ts, coefs)
     return out
 
 
-def soup_lora(weights: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tensor]:
+def soup_lora(weights: list[dict[str, torch.Tensor]], coefs: list[float] | None = None) -> dict[str, torch.Tensor]:
     """The concatenated factors (A along rows, B along columns) of each LoRA module; any
     other tensor in the adapter averaged element-wise. Scaling is the caller's: the
-    returned adapter's update is n times the mean update at the input scaling."""
+    returned adapter's update is n times the mean update at the input scaling. With `coefs`
+    (summing to 1), input i's B is scaled by n * coefs[i], so the update is n times the
+    weighted mean update instead."""
     keys = set(weights[0])
     for w in weights[1:]:
         if set(w) != keys:
@@ -152,16 +160,23 @@ def soup_lora(weights: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tensor]
         if ".lora_A." in k:
             out[k] = torch.cat(ts, dim=0)  # [r, in] -> [n r, in]
         elif ".lora_B." in k:
+            if coefs is not None:
+                n = len(ts)
+                ts = [(t.to(torch.float64) * (n * c)).to(t.dtype) for t, c in zip(ts, coefs, strict=True)]
             out[k] = torch.cat(ts, dim=1)  # [out, r] -> [out, n r]
         elif "lora_" in k:
             raise ValueError(f"adapter tensor {k}: not a plain LoRA factor, cannot be souped")
         else:
-            out[k] = _mean(ts)
+            out[k] = _mean(ts, coefs)
     return out
 
 
-def soup(paths: list[str], out: str) -> dict[str, Any]:
-    """Write the soup of checkpoints `paths` to `out`; returns what soup.json records."""
+def soup(paths: list[str], out: str, coefs: list[float] | None = None) -> dict[str, Any]:
+    """Write the soup of checkpoints `paths` to `out`; returns what soup.json records.
+
+    `coefs` (one per input, summing to 1) gives a weighted average instead of the mean:
+    (1 - t, t) over two runs is the point t on the line between them, which is how the
+    interpolation curve is read before souping (evaluation/unseen_v2/interpolate.py)."""
     from safetensors.torch import load_file, save_file
     from transformers import AutoTokenizer
 
@@ -174,18 +189,21 @@ def soup(paths: list[str], out: str) -> dict[str, Any]:
     if os.path.exists(out) and os.listdir(out):
         raise FileExistsError(f"{out} exists and is not empty")
     n = len(paths)
+    if coefs is not None and (len(coefs) != n or abs(sum(coefs) - 1) > 1e-9 or min(coefs) < 0):
+        raise ValueError(f"coefs must be {n} non-negative numbers summing to 1, got {coefs}")
 
     os.makedirs(out, exist_ok=True)
-    torch.save(soup_head([load_head_state(p) for p in paths]), os.path.join(out, "slot_head.pt"))
+    torch.save(soup_head([load_head_state(p) for p in paths], coefs), os.path.join(out, "slot_head.pt"))
 
     cfg = configs[0]
     record: dict[str, Any] = {"inputs": [os.path.abspath(p) for p in paths],
                               "init": init_identity(paths[0]), "method": "mean",
+                              **({"coefs": list(coefs)} if coefs is not None else {}),
                               "versions": library_versions()}
     if use_lora:
         a0 = dict(adapters[0] or {})
         r, new_r = int(a0["r"]), n * int(a0["r"])
-        merged = soup_lora([load_file(os.path.join(p, "lora", ADAPTER_WEIGHTS)) for p in paths])
+        merged = soup_lora([load_file(os.path.join(p, "lora", ADAPTER_WEIGHTS)) for p in paths], coefs)
         os.makedirs(os.path.join(out, "lora"))
         save_file(merged, os.path.join(out, "lora", ADAPTER_WEIGHTS))
         # lora_alpha / (n r) is each input's lora_alpha / r divided by n: the mean update.
