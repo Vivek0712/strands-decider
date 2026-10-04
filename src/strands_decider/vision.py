@@ -454,6 +454,11 @@ class VisionDeciderModel(StrandsDeciderModel):
         past_key_values: Any = None,
         temperature: Any | None = None,
         opt_idx: torch.Tensor | None = None,
+        pool: torch.Tensor | None = None,
+        has_pool: torch.Tensor | None = None,
+        pool_alpha: float = 0.0,
+        rps_rows: torch.Tensor | None = None,
+        rps_weight: float = 0.0,
         **mm: torch.Tensor | None,
     ) -> dict[str, torch.Tensor]:
         self._mm = {k: v for k, v in mm.items() if v is not None}
@@ -462,6 +467,7 @@ class VisionDeciderModel(StrandsDeciderModel):
                 input_ids, attention_mask, n_slots,
                 labels=labels, label_dist=label_dist, weights=weights,
                 past_key_values=past_key_values, temperature=temperature, opt_idx=opt_idx,
+                pool=pool, has_pool=has_pool, pool_alpha=pool_alpha, rps_rows=rps_rows, rps_weight=rps_weight,
             )
         finally:
             self._mm = {}

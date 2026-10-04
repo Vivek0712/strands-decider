@@ -231,6 +231,19 @@ def masked_log_softmax(logits: torch.Tensor, n_slots: torch.Tensor) -> torch.Ten
     return log_probs.masked_fill(~valid, float("-inf"))
 
 
+def ranked_probability_score(log_probs: torch.Tensor, labels: torch.Tensor, n_slots: torch.Tensor) -> torch.Tensor:
+    """Per row, RPS = (1/(K-1)) * sum_{k<K-1} (F_k - 1[label <= k])^2, with F the cumulative
+    probability over the row's K = n_slots levels in slot order: 0 for a point mass on the
+    label, 1 for a point mass on the far end. Rows with K < 2 score 0."""
+    p = log_probs.float().exp()  # masked slots are -inf, so 0 here
+    cdf = p.cumsum(dim=-1)
+    pos = torch.arange(p.shape[-1], device=p.device)[None, :]
+    observed = (pos >= labels[:, None]).to(cdf.dtype)
+    levels = (n_slots - 1).clamp_min(1)
+    inside = pos < (n_slots - 1)[:, None]
+    return ((cdf - observed) ** 2 * inside).sum(dim=-1) / levels
+
+
 def apply_temperature(logits: torch.Tensor, temperature: Any) -> torch.Tensor:
     """Divide logits by a scalar, or by a per-row tensor of temperatures.
 
@@ -498,7 +511,22 @@ class StrandsDeciderModel(nn.Module):
         past_key_values: Any = None,
         temperature: Any | None = None,
         opt_idx: torch.Tensor | None = None,
+        pool: torch.Tensor | None = None,
+        has_pool: torch.Tensor | None = None,
+        pool_alpha: float = 0.0,
+        rps_rows: torch.Tensor | None = None,
+        rps_weight: float = 0.0,
     ) -> dict[str, torch.Tensor]:
+        """Logits, log-probabilities and, given labels, the loss: the mean over rows (weighted
+        by `weights`) of each row's label loss, NLL or soft-target CE (`label_dist`), with two
+        optional changes per row, both off by default:
+
+        - `pool` (arm A3, data/teacher_pool.py): rows in `has_pool` take
+          pool_alpha * KL(pool || student) + (1 - pool_alpha) * label loss;
+        - `rps_rows` (arm A2, score rows): add rps_weight * RPS, the ranked probability score
+          (1/(K-1)) * sum_k (F_k - 1[label <= k])^2 over the row's K-1 cumulative levels, in
+          slot order (a reversed scale leaves it unchanged).
+        """
         hidden = self.encode(input_ids, attention_mask, past_key_values=past_key_values)
         pooled = pool_last_token(hidden, attention_mask).to(torch.float32)
         if self.config.head_type == "pointer":
@@ -527,6 +555,16 @@ class StrandsDeciderModel(nn.Module):
             per_example = -(label_dist * safe).sum(dim=-1)
         elif labels is not None:
             per_example = F.nll_loss(log_probs, labels, reduction="none")
+
+        if per_example is not None and pool is not None and has_pool is not None and pool_alpha > 0:
+            tgt = pool[:, : log_probs.shape[-1]].to(log_probs.dtype)
+            valid = (tgt > 0) & torch.isfinite(log_probs)
+            diff = (tgt.clamp_min(1e-12).log() - log_probs).masked_fill(~valid, 0.0)
+            kl = (tgt.masked_fill(~valid, 0.0) * diff).sum(dim=-1)
+            per_example = torch.where(has_pool, (1 - pool_alpha) * per_example + pool_alpha * kl, per_example)
+        if per_example is not None and labels is not None and rps_rows is not None and rps_weight > 0:
+            per_example = per_example + rps_weight * ranked_probability_score(
+                log_probs, labels, n_slots) * rps_rows.to(per_example.dtype)
 
         if per_example is not None:
             if weights is None:

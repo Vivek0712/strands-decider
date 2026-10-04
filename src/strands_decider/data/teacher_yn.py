@@ -56,12 +56,14 @@ def _corpus(files: list[str]) -> Iterator[tuple[int, str, Example]]:
             i += 1
 
 
-def select(files: list[str], sources: list[str]) -> tuple[list[int], list[Example]]:
-    """The concatenation index and the example of every yes/no row of `sources`."""
+def select(files: list[str], sources: list[str],
+           kinds: tuple[str, ...] = ("noul",)) -> tuple[list[int], list[Example]]:
+    """The concatenation index and the example of every row of `sources` whose kind is one of
+    `kinds` (by default the yes/no rows)."""
     unknown = set(sources) - set(files)
     if unknown:
         raise ValueError(f"sources not among the train files: {sorted(unknown)}")
-    picked = [(i, ex) for i, f, ex in _corpus(files) if f in sources and ex.kind == "noul"]
+    picked = [(i, ex) for i, f, ex in _corpus(files) if f in sources and ex.kind in kinds]
     return [i for i, _ in picked], [ex for _, ex in picked]
 
 
@@ -87,7 +89,7 @@ def _label(args: argparse.Namespace, ap: argparse.ArgumentParser) -> None:
     sharded = shards.sharded(ap, args)
     if args.engine == "vllm" and args.num_shards > 1:
         ap.error("--engine vllm runs as one process; it does not shard")
-    gidx, examples = select(args.train_files, args.sources)
+    gidx, examples = select(args.train_files, args.sources, tuple(args.kinds))
     out = shards.path(args.out, args.shard_index, args.num_shards) if sharded else args.out
     done: dict[int, list[float]] = {}  # by concatenation index; rerunning resumes
     if args.merge:
@@ -96,7 +98,7 @@ def _label(args: argparse.Namespace, ap: argparse.ArgumentParser) -> None:
         done = shards.read(out)
         print(f"resuming: {len(done):,} rows already labelled")
     if not args.merge:
-        print(f"labelling {len(examples):,} yes/no rows of {', '.join(args.sources)} ({args.engine})")
+        print(f"labelling {len(examples):,} {'/'.join(args.kinds)} rows of {', '.join(args.sources)} ({args.engine})")
         skip = {j for j, i in enumerate(gidx) if i in done}
         t0 = time.time()
         with open(out, "a", encoding="utf-8") as fh:
@@ -164,6 +166,9 @@ def main(argv: list[str] | None = None) -> None:
     lb.add_argument("--out", required=True)
     lb.add_argument("--train-files", nargs="+", default=TRAIN_FILES)
     lb.add_argument("--sources", nargs="+", default=SOURCES)
+    lb.add_argument("--kinds", nargs="+", choices=("noul", "choice", "score"), default=["noul"],
+                    help="the row kinds to label (the pooled-teacher loss, data/teacher_pool.py, "
+                         "also uses choice rows)")
     lb.add_argument("--model", default=MODEL)
     lb.add_argument("--revision", default=REVISION)
     lb.add_argument("--max-batch-tokens", type=int, default=32000)

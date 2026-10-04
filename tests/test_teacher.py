@@ -123,3 +123,36 @@ def test_vllm_that_does_not_renormalise_is_refused(monkeypatch):
     _fake_vllm(monkeypatch, normalised=False)
     with pytest.raises(RuntimeError, match="processed logprobs"):
         label_vllm("m", "r", [NOUL])
+
+
+def test_a_gemma4_teacher_loads_its_text_decoder_and_soft_caps_the_letters(tmp_path):
+    """The A3 second teacher is a multimodal Gemma 4 checkpoint: `load` reads its text decoder
+    (weights from `model.language_model.`), and `label` soft-caps the letter logits as the
+    causal LM does, so the distribution is the full model's own next-token reading."""
+    import re
+
+    import torch
+    import transformers
+    if tuple(int(x) for x in re.findall(r"\d+", transformers.__version__)[:2]) < (5, 18):
+        pytest.skip("the tiny Gemma 4 needs transformers >= 5.18")
+    from tiny_bases import save_gemma4
+
+    from strands_decider.data import teacher
+
+    d = save_gemma4(str(tmp_path / "gemma"))
+    tok = transformers.AutoTokenizer.from_pretrained(d)
+    tok.chat_template = ("{% for m in messages %}<{{ m.role }}>{{ m.content }}\n{% endfor %}"
+                         "{% if add_generation_prompt %}<assistant>{% endif %}")
+    tok.save_pretrained(d)
+    model, tok = teacher.load(d, None, device="cpu", dtype="float32")
+    assert type(model).__name__ == "Gemma4ForCausalLM"
+    full = transformers.Gemma4ForConditionalGeneration.from_pretrained(d, dtype=torch.float32)
+    assert torch.equal(model.get_input_embeddings().weight, full.get_input_embeddings().weight)
+    ex = Example("choice", "A ticket about a refund.", "Which team?", [["billing", ""], ["sales", ""], ["ops", ""]], 0)
+    got = teacher.label(model, tok, [ex])[0]
+    row, order = teacher.to_row(ex)
+    ids = tok(teacher.render(tok, row), add_special_tokens=False, return_tensors="pt")["input_ids"]
+    with torch.no_grad():
+        logits = full(input_ids=ids).logits[0, -1]  # soft-capped by the model itself
+    want = teacher.canonical(torch.softmax(logits[teacher.letter_ids(tok)[:3]], -1).tolist(), order)
+    assert got == pytest.approx(want, abs=1e-5)

@@ -89,21 +89,30 @@ def letter_ids(tokenizer: Any) -> list[int]:
     return ids
 
 
-def load(model_id: str, revision: str) -> tuple[Any, Any]:
+def load(model_id: str, revision: str, device: str = "cuda", dtype: str = "bfloat16") -> tuple[Any, Any]:
     import torch
     import transformers
 
     tok = transformers.AutoTokenizer.from_pretrained(model_id, revision=revision)
     config = transformers.AutoConfig.from_pretrained(model_id, revision=revision)
     cls = transformers.AutoModelForCausalLM
+    kwargs: dict[str, Any] = {}
     if config.model_type in {"qwen3_5", "qwen3_5_text"}:
         # A multimodal checkpoint; load only the text tower, as SemIf's loader does.
         # Right padding stays exact for its recurrent (Gated DeltaNet) layers: the pads
         # come after every real token, so the state at the last real token never sees them.
         cls = transformers.Qwen3_5ForCausalLM
         config = config.get_text_config()
+    elif config.model_type == "gemma4":
+        # A multimodal Gemma 4 checkpoint (google/gemma-4-31B-it, the A3 second teacher):
+        # load only the text decoder. Its weights sit under `model.language_model.`, which
+        # the text causal-LM class reads as `model.` (the towers' weights are left unread,
+        # as modeling._load_torso does); the output head is tied to the embeddings.
+        cls = transformers.Gemma4ForCausalLM
+        config = config.get_text_config()
+        kwargs["key_mapping"] = {r"^model\.language_model\.": "model."}
     model = cls.from_pretrained(model_id, revision=revision, config=config,
-                                dtype=torch.bfloat16, device_map={"": "cuda"})
+                                dtype=getattr(torch, dtype), device_map={"": device}, **kwargs)
     model.eval()
     return model, tok
 
@@ -157,6 +166,8 @@ def label(model: Any, tok: Any, examples: Sequence[Example], *, max_batch_tokens
 
     letters = letter_ids(tok)
     head = model.get_output_embeddings().weight
+    # Gemma soft-caps its output logits, cap * tanh(logits / cap), as its causal LM does
+    cap = getattr(getattr(model, "config", None), "final_logit_softcapping", None)
     rows = [r for r in prompts(tok, examples, max_tokens)
             if num_shards > 1 or not (skip and r[0] in skip)]
 
@@ -190,6 +201,8 @@ def label(model: Any, tok: Any, examples: Sequence[Example], *, max_batch_tokens
             for j, (i, _, order) in enumerate(batch):
                 n = len(order)
                 logits = last[j].float() @ head[letters[:n]].float().t()
+                if cap:
+                    logits = cap * torch.tanh(logits / cap)
                 canon = canonical(torch.softmax(logits, -1).tolist(), order)
                 out[i] = canon
                 if sink is not None:

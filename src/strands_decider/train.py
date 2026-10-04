@@ -112,6 +112,22 @@ class TrainConfig(YamlConfig):
     # Rows it covers get teacher_weight * KL(teacher || student) on top of the label loss.
     teacher_file: str | None = None
     teacher_weight: float = 0.0
+    # Arm A3, the fixed two-teacher loss (data/teacher_pool.py): teacher files labelled on
+    # every row they cover, agreeing with gold or not, each beside its fitted
+    # <file>.calibration.json. Per row, the teachers' recalibrated probabilities are averaged
+    # into a pool, and every row in it trains on
+    #   pool_alpha * KL(pool || student) + (1 - pool_alpha) * CE(gold)
+    # with no agreement filter and no down-weighting; other rows keep CE alone. One file is
+    # one teacher. Empty (the default) changes nothing. A row may not also carry a
+    # teacher_file distribution.
+    pool_teacher_files: list[str] = field(default_factory=list)
+    pool_alpha: float = 0.0
+    # Arm A2: score rows add score_rps_weight * RPS to their label loss, RPS = (1/(K-1)) *
+    # sum_k (F_k - 1[gold <= k])^2 (modeling.ranked_probability_score), a strictly proper score
+    # for an ordered outcome that charges mass by its distance from the gold level. NLL keeps
+    # a gradient on confidently wrong rows, where RPS's vanishes. Pair it with
+    # ordinal_smoothing: 0, whose smoothed target is not proper. 0 (the default) changes nothing.
+    score_rps_weight: float = 0.0
     # Continue from an existing checkpoint, keeping its trained LoRA adapter and
     # attaching a freshly-initialised head. `freeze_torso` alone cannot do this: it
     # drops the adapter and freezes the *base* torso, which would train the new head
@@ -340,6 +356,12 @@ def train(cfg: TrainConfig) -> str:
     unknown = set(cfg.kl_frozen_skip_kinds) - set(KIND_IDS)
     if unknown:
         raise ValueError(f"unknown kl_frozen_skip_kinds: {sorted(unknown)}")
+    if not 0.0 <= cfg.pool_alpha <= 1.0:
+        raise ValueError(f"pool_alpha must be in [0, 1], got {cfg.pool_alpha}")
+    if bool(cfg.pool_teacher_files) != (cfg.pool_alpha > 0):
+        raise ValueError("pool_teacher_files and pool_alpha > 0 go together")
+    if cfg.score_rps_weight < 0:
+        raise ValueError("score_rps_weight must be >= 0")
     if cfg.continue_from:
         print(f"[strands-decider] continuing {cfg.continue_from} (adapter and head trainable)")
         model = StrandsDeciderModel.load(cfg.continue_from, attn_implementation=cfg.attn_implementation,
@@ -352,6 +374,9 @@ def train(cfg: TrainConfig) -> str:
         # The checkpoint records this run's settings, as a fresh model's config would.
         model.config.kl_frozen_weight = cfg.kl_frozen_weight
         model.config.max_length = cfg.max_length
+        # Serving reads it to correct the score-confidence floor smoothing imposes; a run that
+        # trains without smoothing (arm A2) must not keep the parent's.
+        model.config.ordinal_smoothing = cfg.ordinal_smoothing
     elif cfg.init_from:
         from .modeling import SlotHead
 
@@ -423,6 +448,19 @@ def train(cfg: TrainConfig) -> str:
                 n_t += 1
         print(f"[strands-decider] teacher distributions on {n_t:,} of {len(train_examples):,} rows "
               f"(weight {cfg.teacher_weight})")
+    if cfg.pool_teacher_files:
+        from .data.teacher_pool import load_pool
+
+        pooled = load_pool(cfg.pool_teacher_files, train_examples, cfg.train_files)
+        both = [i for i in pooled if getattr(train_examples[i], "teacher", None) is not None]
+        if both:
+            raise ValueError(f"{len(both):,} rows have both a teacher_file distribution and a pooled "
+                             f"teacher (first: row {both[0]}); give each row one teacher target")
+        for i, q in pooled.items():
+            train_examples[i].pool = q  # type: ignore[attr-defined]
+        print(f"[strands-decider] pooled teacher on {len(pooled):,} of {len(train_examples):,} rows from "
+              f"{len(cfg.pool_teacher_files)} file(s): alpha {cfg.pool_alpha} KL(pool || student) + "
+              f"{1 - cfg.pool_alpha:g} CE(gold) on each")
     if cfg.val_files:
         val_examples = load_examples(cfg.val_files)
     else:
@@ -550,6 +588,11 @@ def train(cfg: TrainConfig) -> str:
                 labels=batch["labels"],
                 label_dist=batch.get("label_dist"),
                 weights=batch.get("weights"),
+                pool=batch.get("pool"),
+                has_pool=batch.get("has_pool"),
+                pool_alpha=cfg.pool_alpha,
+                rps_rows=batch["kind_id"] == KIND_IDS["score"],
+                rps_weight=cfg.score_rps_weight,
             )
             step_loss = out["loss"] * part.weights
             if cfg.kl_frozen_weight > 0:

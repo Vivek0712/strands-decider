@@ -188,6 +188,7 @@ class SystemOneCollator:
         dists: list[torch.Tensor | None] = []
         weights: list[float] = []
         teachers: list[list[float] | None] = []
+        pools: list[list[float] | None] = []
 
         pointer = self.cfg.head_type == "pointer"
         spans: list[Any] = []
@@ -211,6 +212,9 @@ class SystemOneCollator:
             # order; slot k shows canonical option order[k], exactly as for the label.
             t = getattr(ex, "teacher", None)
             teachers.append(None if t is None else (t if order is None else [t[i] for i in order]))
+            # The pooled teacher of the A3 loss (data/teacher_pool.py), mapped the same way.
+            q = getattr(ex, "pool", None)
+            pools.append(None if q is None else (q if order is None else [q[i] for i in order]))
 
         enc = self.tok(
             texts,
@@ -264,4 +268,11 @@ class SystemOneCollator:
                     tt[i, : len(t)] = torch.tensor(t, dtype=torch.float32)
             out["teacher"] = tt
             out["has_teacher"] = torch.tensor([t is not None for t in teachers])
+        if any(q is not None for q in pools):
+            pt = torch.zeros((len(batch), width), dtype=torch.float32)
+            for i, q in enumerate(pools):
+                if q is not None:
+                    pt[i, : len(q)] = torch.tensor(q, dtype=torch.float32)
+            out["pool"] = pt
+            out["has_pool"] = torch.tensor([q is not None for q in pools])
         return out
