@@ -4,8 +4,9 @@ The builders of an image training set: about 38,000 questions over images, writt
 in-tree `Example` rows plus the image paths and their provenance ([`common.py`](common.py)).
 Each builder is a script over its downloaded source (training splits only; `--help` lists
 its inputs), and `data/checks/dedupe_images.py` checks the result against every evaluation
-image. Nothing here is committed but the code: the rows and images land in
-`data/image/build/`, which git ignores.
+image. `training/recipe_images.sh fetch build dedupe` runs them all in order for the image
+configs (`configs/vision/`). Nothing here is committed but the code: the rows and images
+land in `data/image/build/`, which git ignores.
 
 Yes/no questions are written 60% as nouls with the server's default criteria and 40% as
 yes/no choices, the form NaturalBench and Image JevBench ask in. Every gold answer comes
@@ -19,6 +20,14 @@ from the source's annotation or, for the rendered images, from the values that w
 | [`charts.py`](charts.py) | 7,667 | 2,599 | rendered here with matplotlib, no third-party data | extremes, comparisons, printed values, differences, peaks, trends, grouped bars, pies, 2x2 panels; numeric distractors placed so the gold's rank is uniform |
 | [`documents.py`](documents.py) | 5,789 | 1,500 | rendered here with Pillow, no third-party data | invoices, receipts, orders and quotes, forms with checkboxes and signatures, multi-year financial tables (values, changes, sums), some made to look scanned |
 | [`tabfact.py`](tabfact.py) | 2,484 | 1,271 | TabFact train tables (MIT; tables from Wikipedia, CC BY-SA) at commit `2ab782ba42b5808076ac91fec846473aa5315a79`, rendered here | is this statement supported by the table |
+
+Training adds two things to these rows (`strands_decider.vision_train`): 3,000 of v19's
+own committed text training rows (`data/synthetic/generated_v16.jsonl`,
+`generated_v18.jsonl`, `adequacy_gen.jsonl`), or, for the hobson-v20-vl configs, 3,000 of
+v20's training rows with their 27B-teacher targets; and an image-removed copy of 15% of
+the image rows with at most 9 options, trained only toward the frozen torso's reading of
+the text-only prompt (with `kl_frozen_skip_kinds: ["noul"]`, only the choice and score
+copies; the yes/no copies then carry no loss).
 
 ## Hashes of record
 

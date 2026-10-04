@@ -19,14 +19,22 @@ config's `train_files` in order: the output is that config's `teacher_file`.
 On N GPUs, run `label` once per GPU with `--num-shards N --shard-index i`, then once with
 `--merge` (data/shards.py), as for data/teacher.py. `label --engine vllm` reads the same
 distributions through vLLM (teacher.label_vllm) on one GPU, unsharded.
+
+`replay` draws text rows that carry their teacher distribution, for image training to
+replay (vision_train's `text_replay_files`, whose `teacher` rows train toward it):
+
+    python -m strands_decider.data.teacher_yn replay --teacher data/teacher_yn_qwen35-27b.jsonl \
+        --n-yes-no 2000 --n-other 1000 --out data/replay_teacher_yn.jsonl
 """
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import random
 import time
 from collections.abc import Iterator
+from typing import Any
 
 from . import shards, teacher
 from .distill import agreeing
@@ -124,6 +132,31 @@ def _build(args: argparse.Namespace) -> None:
           f"{len(kept.keys() & base.keys()):,} base rows replaced)")
 
 
+def replay_rows(files: list[str], teacher_file: str, n_yes_no: int, n_other: int,
+                seed: int = 0) -> list[dict[str, Any]]:
+    """`n_yes_no` yes/no rows and `n_other` other rows of `files` that the teacher file
+    covers, drawn at random, each as its example with `teacher` (canonical option order)."""
+    dist = shards.read(teacher_file)
+    yes_no: list[tuple[int, Example]] = []
+    other: list[tuple[int, Example]] = []
+    for i, _, ex in _corpus(files):
+        if i in dist:
+            (yes_no if ex.kind == "noul" else other).append((i, ex))
+    if n_yes_no > len(yes_no) or n_other > len(other):
+        raise ValueError(f"the teacher covers {len(yes_no):,} yes/no and {len(other):,} other rows; "
+                         f"asked for {n_yes_no:,} and {n_other:,}")
+    rng = random.Random(seed)
+    picked = sorted(rng.sample(yes_no, n_yes_no) + rng.sample(other, n_other), key=lambda r: r[0])
+    return [{**json.loads(ex.to_json()), "teacher": dist[i]} for i, ex in picked]
+
+
+def _replay(args: argparse.Namespace) -> None:
+    rows = replay_rows(args.train_files, args.teacher, args.n_yes_no, args.n_other, args.seed)
+    with open(args.out, "w", encoding="utf-8") as fh:
+        fh.writelines(json.dumps(r, ensure_ascii=False) + "\n" for r in rows)
+    print(f"{args.out}: {len(rows):,} rows ({args.n_yes_no:,} yes/no) with teacher distributions")
+
+
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description="A stronger teacher on the yes/no rows, where it agrees with gold.")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -143,11 +176,20 @@ def main(argv: list[str] | None = None) -> None:
     bd.add_argument("--base", default="data/replay_v14_multistep.jsonl")
     bd.add_argument("--out", required=True)
     bd.add_argument("--train-files", nargs="+", default=TRAIN_FILES)
+    rp = sub.add_parser("replay", help="text rows with their teacher distribution, for image training")
+    rp.add_argument("--teacher", required=True, help="a teacher file `build` wrote")
+    rp.add_argument("--n-yes-no", type=int, default=2000)
+    rp.add_argument("--n-other", type=int, default=1000)
+    rp.add_argument("--seed", type=int, default=0)
+    rp.add_argument("--out", required=True)
+    rp.add_argument("--train-files", nargs="+", default=TRAIN_FILES)
     args = ap.parse_args(argv)
     if args.cmd == "label":
         _label(args, lb)
-    else:
+    elif args.cmd == "build":
         _build(args)
+    else:
+        _replay(args)
 
 
 if __name__ == "__main__":
