@@ -34,6 +34,11 @@ by the PIL image processor the engine pins.
         init_from=checkpoints/my-text-checkpoint max_steps=100
 
 Single process, one GPU: about 46 minutes for the recorded 1,404 steps on one H100.
+
+With `projector_from` set, the checkpoint is a text-only torso (MiniCPM5) given grafted
+eyes (graft.py): the stage-1 projector in that directory is loaded beside the text
+checkpoint, trains at `projector_lr`, and is saved with the adapter and head; the SigLIP
+encoder stays frozen. Everything else (rows, copies, losses) is the same recipe.
 """
 
 from __future__ import annotations
@@ -45,7 +50,7 @@ import random
 import sys
 import time
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import Any, cast
 
 import torch
 from torch.utils.data import DataLoader, Dataset
@@ -59,6 +64,7 @@ from .vision import (
     ImagePrompt,
     VisionDeciderModel,
     fit_image,
+    load_vision_model,
     mm_base,
     read_image,
 )
@@ -75,6 +81,10 @@ class VisionTrainConfig(YamlConfig):
     # the checkpoint to continue: a local directory, or a Hub repo at `init_revision`
     init_from: str = "StrandsAgents/strands-decider-2B-hobson-v19"
     init_revision: str | None = "bb282d786bc251fd4e3068de3ada9ddbb38127cd"
+    # A stage-1 projector directory (graft_align.py): grafts its encoder and projector onto
+    # `init_from`, a text checkpoint on a text-only torso. None: Qwen3.5's own tower.
+    projector_from: str | None = None
+    projector_lr: float = 2e-5
 
     # data: the builders' JSONL files under `data_root`, image paths relative to it
     data_root: str = "data/image/build"
@@ -338,13 +348,21 @@ def evaluate(model: VisionDeciderModel, loader: DataLoader, device: str) -> dict
 
 
 def load_model(cfg: VisionTrainConfig) -> VisionDeciderModel:
-    """The checkpoint to continue, its adapter and head trainable, its vision tower frozen."""
+    """The checkpoint to continue, its adapter and head (and a grafted projector)
+    trainable, its vision tower or encoder frozen."""
     path = cfg.init_from
     if not os.path.isdir(path):
         from huggingface_hub import snapshot_download
 
         path = snapshot_download(path, revision=cfg.init_revision)
-    model = VisionDeciderModel.load(path, trainable=True)
+    model: VisionDeciderModel
+    if cfg.projector_from:
+        from .graft import GraftedDeciderModel
+
+        model = cast(VisionDeciderModel, GraftedDeciderModel.load(
+            path, projector_from=cfg.projector_from, trainable=True))
+    else:
+        model = load_vision_model(path, trainable=True)
     # Fitted on the checkpoint's own answers to images; stale once it trains on them.
     model.config.image_temperature_by_kind = {}
     if cfg.gradient_checkpointing:
@@ -390,6 +408,11 @@ def train(cfg: VisionTrainConfig) -> str:
 
     optim = _build_optimizer(model, lr=cfg.lr, head_lr=cfg.head_lr, weight_decay=cfg.weight_decay)
     params = list(model.head.parameters()) + [p for p in model.torso.parameters() if p.requires_grad]
+    projector = getattr(model, "projector", None)
+    if projector is not None:  # a grafted model's projector: its own learning rate
+        optim.add_param_group({"params": list(projector.parameters()), "lr": cfg.projector_lr,
+                               "weight_decay": 0.0})
+        params += list(projector.parameters())
     warmup = max(1, int(total_steps * cfg.warmup_ratio))
     sched = torch.optim.lr_scheduler.LambdaLR(optim, lambda s: _lr_lambda(s, warmup, total_steps))
     print(f"[vision-train] {len(batches)} micro-batches, {total_steps} steps", flush=True)

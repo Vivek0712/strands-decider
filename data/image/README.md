@@ -21,6 +21,13 @@ from the source's annotation or, for the rendered images, from the values that w
 | [`documents.py`](documents.py) | 5,789 | 1,500 | rendered here with Pillow, no third-party data | invoices, receipts, orders and quotes, forms with checkboxes and signatures, multi-year financial tables (values, changes, sums), some made to look scanned |
 | [`tabfact.py`](tabfact.py) | 2,484 | 1,271 | TabFact train tables (MIT; tables from Wikipedia, CC BY-SA) at commit `2ab782ba42b5808076ac91fec846473aa5315a79`, rendered here | is this statement supported by the table |
 
+[`captions.py`](captions.py) is not a decider builder: it writes stage-1 alignment rows for
+a grafted encoder (`strands_decider.graft_align`, docs/vision.md): 80,000 COCO train2014
+images with one caption each (COCO Captions 2014 train annotations, CC BY 4.0; images under
+their Flickr licences). It refuses any val2014 image, since POPE evaluates on val2014, and
+stage 1 refuses one again when it reads the rows. `training/recipe_minicpm_vision.sh fetch
+build dedupe` downloads, builds and checks them.
+
 Training adds two things to these rows (`strands_decider.vision_train`): 3,000 of v19's
 own committed text training rows (`data/synthetic/generated_v16.jsonl`,
 `generated_v18.jsonl`, `adequacy_gen.jsonl`), or, for the hobson-v20-vl configs, 3,000 of
