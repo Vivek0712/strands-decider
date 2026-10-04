@@ -21,7 +21,10 @@ from strands_decider.modeling import StrandsDeciderConfig
 from strands_decider.train import TrainConfig
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CONFIGS = sorted(glob.glob(os.path.join(ROOT, "configs", "**", "*.yaml"), recursive=True))
+# configs/vision/ holds image-training configs (strands_decider.vision_train), the rest TrainConfig's.
+VISION = sorted(glob.glob(os.path.join(ROOT, "configs", "vision", "*.yaml")))
+CONFIGS = sorted(set(glob.glob(os.path.join(ROOT, "configs", "**", "*.yaml"), recursive=True))
+                 - set(VISION))
 FIXTURE = os.path.join(ROOT, "tests", "fixtures", "v19-p5-run1")
 
 
@@ -37,6 +40,13 @@ def _differing_keys(a, b):
 def test_every_config_loads(path):
     # from_yaml rejects unknown keys, so this also fails when a field is removed or renamed.
     TrainConfig.from_yaml(path)
+
+
+@pytest.mark.parametrize("path", VISION, ids=[os.path.relpath(p, ROOT) for p in VISION])
+def test_every_vision_config_loads(path):
+    from strands_decider.vision_train import VisionTrainConfig
+
+    VisionTrainConfig.from_yaml(path)
 
 
 def test_train_yaml_is_v19_except_three_keys():
@@ -66,7 +76,11 @@ def test_v19_saved_configs_load():
 
 def _config(path: str) -> dict:
     """Any shipped config, parsed by the class its directory belongs to."""
-    return dataclasses.asdict(TrainConfig.from_yaml(path))
+    from strands_decider.vision_train import VisionTrainConfig
+
+    kind = os.path.basename(os.path.dirname(path))
+    cls = {"vision": VisionTrainConfig}.get(kind, TrainConfig)
+    return dataclasses.asdict(cls.from_yaml(path))
 
 
 SEED_REPLICATES = sorted(glob.glob(os.path.join(ROOT, "configs", "**", "*-seed[0-9].yaml"), recursive=True))
@@ -85,3 +99,25 @@ def test_v20_is_v19_yn27b_for_a_full_epoch_from_one_initialisation():
         "configs", "experiments", "v19-yn27b.yaml")
     assert _differing_keys(v20, yn) == {"max_steps", "init_seed", "output_dir"}
     assert (v20["continue_from"], v20["max_steps"], v20["init_seed"]) == ("checkpoints/v19", 3738, 0)
+
+
+def _vision(name: str) -> dict:
+    return _config(os.path.join(ROOT, "configs", "vision", f"{name}.yaml"))
+
+
+def test_vision_train_overrides_init_from_at_run_time():
+    from strands_decider.vision_train import VisionTrainConfig
+
+    cfg = VisionTrainConfig.from_yaml(os.path.join(ROOT, "configs", "vision", "v19-images.yaml"))
+    over = cfg.with_overrides(["init_from=/ckpt/text", "init_revision=null", "max_steps=3"])
+    assert (over.init_from, over.init_revision, over.max_steps, over.seed) == ("/ckpt/text", None, 3, 0)
+    with pytest.raises(ValueError, match="init_frm"):
+        cfg.with_overrides(["init_frm=/x"])
+
+
+def test_v20_vl_is_v19_images_on_the_v20_soup_keeping_v20s_text_losses():
+    v20vl, v19img = _vision("strands-decider-2B-hobson-v20-vl"), _vision("v19-images")
+    assert v20vl["init_from"] == "checkpoints/strands-decider-2B-hobson-v20"
+    assert _differing_keys(v20vl, v19img) == {"init_from", "init_revision", "text_replay_files",
+                                              "kl_frozen_skip_kinds", "output_dir"}
+    assert v20vl["kl_frozen_skip_kinds"] == ["noul"] and v20vl["teacher_weight"] == 1.0
