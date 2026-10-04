@@ -29,6 +29,9 @@ dependencies = [
 [project.optional-dependencies]
 # Only the corpus build uses datasets: `strands-decider data build` and `python -m strands_decider.data.multistep`.
 train = ["datasets>=2.20"]
+# Only evaluation/unseen_v2/build.py: the public rows (datasets) and the chess family's rules
+# (python-chess, GPL-3.0, a build-time tool; the package never imports it).
+unseen = ["datasets>=2.20", "chess>=1.10"]
 # Image input (`serve --vision`, `ask --image`, docs/vision.md); also needs transformers >= 5.18.
 vision = ["pillow>=10"]
 # `--device mlx`: the torso on Apple silicon's GPU through mlx-lm (src/strands_decider/mlx_engine.py).

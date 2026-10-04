@@ -112,7 +112,9 @@ def run(rows: list[dict[str, Any]], ask: Ask) -> list[dict[str, Any]]:
         ex = Example.from_dict(r)
         question = ex.to_question().model_dump(exclude_none=True)
         p = probabilities(ex, ask(ex.state, question))
-        out.append({"id": i, "task": ex.task, "kind": ex.kind, "gold": ex.label, "probs": p})
+        # unseen-v2 rows carry their split and question template; they ride along for score.py
+        extra = {k: r[k] for k in ("split", "template") if k in r}
+        out.append({"id": i, "task": ex.task, "kind": ex.kind, "gold": ex.label, "probs": p, **extra})
     return out
 
 

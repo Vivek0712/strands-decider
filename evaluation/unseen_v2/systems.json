@@ -1,0 +1,22 @@
+{
+  "_comment": "Stage C: public board systems to run on unseen-v2. Every one is evaluation only for us: never train on its answers or use them as teacher targets; licence_evaluation_only marks the ones whose licence permits nothing else. Revisions are pinned at download and recorded beside the answers by rank_check.py --revision; adapter null means the system's inference code has not been wired yet (read it at the pinned revision, add a factory to adapters.py or serve it behind the System One API). The official scores the ranks are checked against live in official_v1.5.5.csv.",
+  "systems": [
+    {"name": "decider-2b", "source": "hf:Mapika/decider-2b", "licence": "Apache-2.0", "licence_evaluation_only": false,
+     "adapter": "python:adapters:decider"},
+    {"name": "decider-4b-v2", "source": "hf:Mapika/decider-4b@v2", "licence": "Apache-2.0", "licence_evaluation_only": false,
+     "adapter": "python:adapters:decider"},
+    {"name": "decision-2b-preview", "source": "FlyMy decision-2b-preview", "licence": "evaluation permission only",
+     "licence_evaluation_only": true, "adapter": "python:adapters:flymy"},
+    {"name": "spark-s1-4b-v6", "source": "hf:spark-s1-4b-v6 (merged Qwen3_5ForCausalLM, letter readout + calibration.json)",
+     "licence": "Apache-2.0", "licence_evaluation_only": false, "adapter": null},
+    {"name": "lev", "source": "hf:interfaze-ai/lev", "licence": "Apache-2.0", "licence_evaluation_only": false, "adapter": null},
+    {"name": "kev-4b", "source": "hf:jaredpalmer/kev-4b", "licence": "Apache-2.0", "licence_evaluation_only": false, "adapter": null},
+    {"name": "jev-omni", "source": "hf:akhilaaa3/Jev-Omni", "licence": "Apache-2.0", "licence_evaluation_only": false, "adapter": null},
+    {"name": "cygnet", "source": "github:blockbrain-ai/cygnet-recipe (frozen Gemma-4-12B-it + shim)",
+     "licence": "MIT shim, Apache-2.0 weights", "licence_evaluation_only": false, "adapter": null},
+    {"name": "winnow-12b", "source": "hf:EldanRing/Winnow-12B (Q8_0 GGUF, llama.cpp)", "licence": "Apache-2.0",
+     "licence_evaluation_only": false, "adapter": null},
+    {"name": "system-one-open", "source": "github: Gemma E2B-it + LoRA", "licence": "MIT / Gemma", "licence_evaluation_only": false,
+     "adapter": null}
+  ]
+}
