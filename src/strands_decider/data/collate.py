@@ -12,11 +12,12 @@ from __future__ import annotations
 import random
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, NamedTuple
 
 import torch
 
 from ..prompting import build_prompt
+from ..schema import Question
 from .format import Example
 
 
@@ -37,6 +38,16 @@ class CollatorConfig:
     # Sample among an example's instruction phrasings each epoch.
     vary_instructions: bool = True
     seed: int = 0
+
+
+class Draw(NamedTuple):
+    """One row as a training step shows it: the option order (None: canonical), the
+    question in the drawn phrasing, and the label and soft target in slot order."""
+
+    order: list[int] | None
+    question: Question
+    label: int
+    target: torch.Tensor | None
 
 
 class SystemOneCollator:
@@ -74,6 +85,13 @@ class SystemOneCollator:
             return None
         pool = ex.all_instructions()
         return self.rng.choice(pool) if len(pool) > 1 else None
+
+    def draw(self, ex: Example) -> Draw:
+        """This row's random rendering choices, drawn from the collator's stream."""
+        order = self._option_order(ex)
+        question = ex.to_question(self._instruction(ex))
+        return Draw(order, question, self._remap_label(ex.label, order),
+                    self._target_distribution(ex, ex.label, ex.n_options, order))
 
     def skip(self, batch: list[Example]) -> None:
         """Advance the random stream exactly as collating `batch` would, rendering nothing.
@@ -176,18 +194,14 @@ class SystemOneCollator:
                     f"example from task {ex.task!r} has {ex.n_options} options but the "
                     f"model has only {self.cfg.num_slots} slots"
                 )
-            order = self._option_order(ex)
-            prompt, rq = build_prompt(
-                ex.state,
-                ex.to_question(self._instruction(ex)),
-                option_order=order,
-            )
+            order, question, label, target = self.draw(ex)
+            prompt, rq = build_prompt(ex.state, question, option_order=order)
             texts.append(prompt)
             # Option spans are relative to the question; the prompt is state + question.
             spans.append((len(prompt) - len(rq.text), rq.option_spans))
-            labels.append(self._remap_label(ex.label, order))
+            labels.append(label)
             n_slots.append(ex.n_options)
-            dists.append(self._target_distribution(ex, ex.label, ex.n_options, order))
+            dists.append(target)
             weights.append(ex.weight)
             # A teacher's distribution (train.py attaches it) is in canonical option
             # order; slot k shows canonical option order[k], exactly as for the label.
