@@ -170,6 +170,13 @@ depend on the short-task corpus ([1. Build the corpora](steps.md#1-build-the-cor
 adds v20's measures: the catch-all set, and paraphrase consistency and instruction-flip
 pairs (`evaluation/pair_eval.py`).
 
+**The candidate models** ([docs/models/](../docs/models/)): `TrainConfig` options serve
+their text recipes: `continue_from` (train an existing checkpoint's adapter and head,
+rather than a fresh head on a frozen torso as `init_from` does), `kl_frozen_skip_kinds` (no
+frozen-KL term on the listed row kinds) and `init_seed` (seed the initialisation apart from
+the data order, so seeds can be averaged with `strands-decider soup`), with
+`recipe.sh teacher_yn`.
+
 The steps, each with its command, are in [steps.md](steps.md):
 [1. Build the corpora](steps.md#1-build-the-corpora),
 [2. Label with the teacher](steps.md#2-label-with-the-teacher), [3. Train](steps.md#3-train),

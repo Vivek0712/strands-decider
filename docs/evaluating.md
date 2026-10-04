@@ -1,8 +1,9 @@
 # Evaluating a checkpoint, and checking a claim
 
 How to measure any Strands Decider checkpoint (a local training run, a Hub repo, or a
-downloaded archive) against a baseline, and how to check a number someone reports. Every
-measure here is **local**: none of them is a JevBench board score.
+downloaded archive) the way the candidate models in [docs/models/](models/) were measured,
+and how to check a number someone reports. Every measure here is **local**: none of them is
+a JevBench board score.
 
 Three measures, each with a paired comparison against a baseline:
 
@@ -29,8 +30,8 @@ A checkpoint is a local directory or a Hub repo id. A downloaded archive is unpa
 and checked against its published hash:
 
 ```bash
-NAME=my-checkpoint                                      # the archive's name
-URL=https://example.org/weights                         # where it and its sha256 list are published
+NAME=strands-decider-2B-hobson-v20                     # any name in docs/models/
+URL=https://vision-decider-643603452951-us-east-1.s3.us-east-1.amazonaws.com/weights
 curl -fO "$URL/$NAME.tar" && curl -fO "$URL/weights_SHA256SUMS.txt"
 grep " $NAME.tar\$" weights_SHA256SUMS.txt | sha256sum -c -
 mkdir -p checkpoints && tar -xf "$NAME.tar" -C checkpoints  # -> checkpoints/$NAME/
@@ -116,22 +117,26 @@ strands-decider calibrate CKPT --kinds choice,score --objective nll --limit 900 
 - `--data` may be repeated; each file is split and capped (`--limit`) on its own, so a large
   held-out set does not crowd out small ones.
 
-Without these options, calibration is unchanged. The second command, after the first, is the
-refit called "Fix A" in the results log below: the rebuilt `data/holdout_v5_norule.jsonl` no
-longer matches `data/SHA256SUMS` (an upstream held-out dataset has changed), and on it the
-first step alone gave some checkpoints score temperatures of 3.7-4.6, which flatten score
-answers. The recorded refit used these two files only, the multi-step file capped at 900
-rows and the held-out file at 1,800 before halving; `--limit` caps each file's calibration
-half, so this command draws a similar but not identical sample, and its temperatures need
-not match the recorded ones exactly. A published archive already carries its fitted
-temperatures; refit only a checkpoint you trained yourself.
+Without these options, calibration is unchanged. The second command is the refit the
+candidate models were served with (their documents call it "Fix A"): the rebuilt
+`data/holdout_v5_norule.jsonl` no longer matches `data/SHA256SUMS` (an upstream held-out
+dataset has changed), and on it the first step alone gave some checkpoints score
+temperatures of 3.7-4.6, which flatten score answers. The recorded refit used these two
+files only, the multi-step file capped at 900 rows and the held-out file at 1,800 before
+halving; `--limit` caps each file's calibration half, so this command draws a similar but
+not identical sample, and its temperatures need not match the recorded ones exactly. The
+published archives already carry their fitted temperatures; refit only to reproduce a
+checkpoint you trained yourself.
 
 ## Checking a claim
 
-To check a reported number, given the command that produced it:
+A model document in [docs/models/](models/) gives, for each number, the command that
+produced it. To check one:
 
-1. Download the archive and check its sha256, and its files' (above).
-2. Serve it as its documentation says and send one request ([docs/inference.md](inference.md)).
+1. Download the archive and check its sha256 (above). The archive also holds the exact
+   training config (`train_config.json`) and a `SHA256SUMS` of its files.
+2. Serve it with the document's serve command and send one request
+   ([docs/inference.md](inference.md)).
 3. Run the measure on it and on the baseline, with the commands above, and compare with
    `--vs`. Read the interval: on 231 tasks, differences under a few points of the proxy are
    within run-to-run noise; on the unseen set, under about 3 points.
@@ -140,5 +145,5 @@ To check a reported number, given the command that produced it:
    `evaluation/unseen/run.py` records the library versions it ran with (`run_meta.json`);
    record yours for the other measures.
 
-The runs these tools were built for, per seed, with every table, are in the results log:
+The recorded runs, per seed, with every table, are in the results log:
 https://github.com/Vivek0712/strands-decider/blob/ed29b08bb71aad26133bb6c45e8027648f5725ef/RESULTS.md.
