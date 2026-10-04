@@ -207,4 +207,4 @@ alone to caption 80,000 COCO train2014 images through the frozen base LM
 stage 2 is the v19-images recipe on the v21 MiniCPM5 text checkpoint with that projector,
 LoRA, head and projector trained (`configs/vision/strands-decider-2.5B-minicpm-v21-vl*.yaml`).
 Checks: `tests/test_graft.py`. Exploratory; the commands are in [v20-v21.md](v20-v21.md) and
-the measurements in the results release (RESULTS_RELEASE_URL).
+the measurements in the results release (https://github.com/Vivek0712/strands-decider/blob/b63bc26de24a935a4925ed96616954f82daf1f80/research/v21/RESULTS.md).
