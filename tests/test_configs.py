@@ -23,8 +23,10 @@ from strands_decider.train import TrainConfig
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # configs/vision/ holds image-training configs (strands_decider.vision_train), the rest TrainConfig's.
 VISION = sorted(glob.glob(os.path.join(ROOT, "configs", "vision", "*.yaml")))
+# configs/align/ holds stage-1 projector alignment configs (strands_decider.graft_align).
+ALIGN = sorted(glob.glob(os.path.join(ROOT, "configs", "align", "*.yaml")))
 CONFIGS = sorted(set(glob.glob(os.path.join(ROOT, "configs", "**", "*.yaml"), recursive=True))
-                 - set(VISION))
+                 - set(VISION) - set(ALIGN))
 FIXTURE = os.path.join(ROOT, "tests", "fixtures", "v19-p5-run1")
 
 
@@ -47,6 +49,13 @@ def test_every_vision_config_loads(path):
     from strands_decider.vision_train import VisionTrainConfig
 
     VisionTrainConfig.from_yaml(path)
+
+
+@pytest.mark.parametrize("path", ALIGN, ids=[os.path.relpath(p, ROOT) for p in ALIGN])
+def test_every_align_config_loads(path):
+    from strands_decider.graft_align import AlignConfig
+
+    AlignConfig.from_yaml(path)
 
 
 def test_train_yaml_is_v19_except_three_keys():
@@ -76,10 +85,11 @@ def test_v19_saved_configs_load():
 
 def _config(path: str) -> dict:
     """Any shipped config, parsed by the class its directory belongs to."""
+    from strands_decider.graft_align import AlignConfig
     from strands_decider.vision_train import VisionTrainConfig
 
     kind = os.path.basename(os.path.dirname(path))
-    cls = {"vision": VisionTrainConfig}.get(kind, TrainConfig)
+    cls = {"vision": VisionTrainConfig, "align": AlignConfig}.get(kind, TrainConfig)
     return dataclasses.asdict(cls.from_yaml(path))
 
 
@@ -148,3 +158,14 @@ def test_v21_is_the_minicpm5_bakeoff_arm_for_the_same_full_epoch():
     assert _differing_keys(v21, arm) == {"max_steps", "init_seed", "output_dir"}
     assert (v21["max_steps"], v21["init_seed"]) == (v20["max_steps"], v20["init_seed"])
     assert v21["continue_from"] is None and v21["base_revision"]
+
+
+def test_v21_vl_is_v19_images_on_the_v21_soup_with_the_stage1_projector():
+    v21vl, v19img = _vision("strands-decider-2.5B-minicpm-v21-vl"), _vision("v19-images")
+    assert v21vl["init_from"] == "checkpoints/strands-decider-2.5B-minicpm-v21"
+    assert _differing_keys(v21vl, v19img) == {"init_from", "init_revision", "projector_from",
+                                              "est_image_tokens", "output_dir"}
+    align = _config(os.path.join(ROOT, "configs", "align", "strands-decider-2.5B-minicpm-v21-vl.yaml"))
+    assert v21vl["projector_from"] == align["output_dir"]
+    v21 = _load("configs", "experiments", "strands-decider-2.5B-minicpm-v21.yaml")
+    assert (align["base_model"], align["base_revision"]) == (v21["base_model"], v21["base_revision"])
