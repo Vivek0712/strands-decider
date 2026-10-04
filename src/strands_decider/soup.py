@@ -199,6 +199,7 @@ def soup(paths: list[str], out: str) -> dict[str, Any]:
     # The mean of calibrated models is not calibrated; forward() would apply these.
     cfg.temperature = 1.0
     cfg.temperature_by_kind = {}
+    cfg.image_temperature_by_kind = {}
     with open(os.path.join(out, CONFIG_NAME), "w", encoding="utf-8") as fh:
         fh.write(cfg.to_json())
     AutoTokenizer.from_pretrained(paths[0]).save_pretrained(out)

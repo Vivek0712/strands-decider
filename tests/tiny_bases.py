@@ -8,7 +8,13 @@ builds a Qwen3.5: written to a directory, nothing downloaded.
   sliding and full attention and KV-shared layers, plus a vision tower), saved through
   Gemma4ForConditionalGeneration so its decoder weights sit under `model.language_model.`
   as in google/gemma-4-E2B, and a real `GemmaTokenizer` (byte-fallback BPE, no merges,
-  spaces as "▁", `<bos>` prepended).
+  spaces as "▁", `<bos>` prepended). With `images=True` the tokeniser also has Gemma 4's
+  image tokens `<|image>`, `<|image|>`, `<image|>` as special tokens whose ids the config
+  names, a 1-layer audio tower is saved too (as google/gemma-4-E2B ships one, for the image
+  path to leave unread), and a `Gemma4ImageProcessorPil` at 70 soft tokens per image
+  (google/gemma-4-E2B ships 280) is saved beside it, so the multimodal model answers over
+  images (tests/test_vision_gemma.py). The default keeps the text-only bases of test_bases.py
+  exactly as they were.
 
 Each tokeniser reloads as itself through AutoTokenizer and tokenises every character of a
 state or question, as the real ones do.
@@ -18,6 +24,8 @@ from __future__ import annotations
 
 import torch
 
+# begin-of-image, the soft-token placeholder, end-of-image: as google/gemma-4-E2B's tokeniser
+GEMMA_IMAGE_TOKENS = ("<|image>", "<|image|>", "<image|>")
 ATTENTION_MLP = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
 
 
@@ -51,7 +59,7 @@ def save_llama(d: str) -> str:
     return d
 
 
-def gemma4_tokenizer():
+def gemma4_tokenizer(images: bool = False):
     import transformers
 
     specials = ["<pad>", "<eos>", "<bos>", "<unk>", "<mask>"]
@@ -59,15 +67,23 @@ def gemma4_tokenizer():
     pieces += [chr(c) for c in range(33, 127)] + ["\n"]
     tok = transformers.GemmaTokenizer(vocab={p: i for i, p in enumerate(pieces)}, merges=[],
                                       add_bos_token=True)
+    if images:
+        tok.add_special_tokens({"additional_special_tokens": list(GEMMA_IMAGE_TOKENS)})
     tok.padding_side = "left"  # as google/gemma-4-E2B ships it; the package pads right itself
     return tok
 
 
-def save_gemma4(d: str) -> str:
+AUDIO = {"hidden_size": 32, "num_hidden_layers": 1, "num_attention_heads": 2,
+         "subsampling_conv_channels": [8, 4], "output_proj_dims": 32}
+
+
+def save_gemma4(d: str, images: bool = False) -> str:
     """4 decoder layers (sliding, full, then two sharing their KV), a 1-layer ViT."""
     import transformers
 
-    tok = gemma4_tokenizer()
+    tok = gemma4_tokenizer(images)
+    ids = dict(zip(("boi_token_id", "image_token_id", "eoi_token_id"),
+                   tok.convert_tokens_to_ids(list(GEMMA_IMAGE_TOKENS)), strict=True)) if images else {}
     cfg = transformers.Gemma4Config(
         text_config={
             "hidden_size": 64, "num_hidden_layers": 4, "intermediate_size": 128, "head_dim": 16,
@@ -82,9 +98,27 @@ def save_gemma4(d: str) -> str:
         vision_config={"hidden_size": 32, "num_hidden_layers": 1, "intermediate_size": 64,
                        "num_attention_heads": 2, "num_key_value_heads": 2, "head_dim": 16,
                        "global_head_dim": 16},
-        audio_config=None,
+        audio_config=AUDIO if images else None, **ids,
     )
     torch.manual_seed(0)
     transformers.Gemma4ForConditionalGeneration(cfg).save_pretrained(d)
     tok.save_pretrained(d)
+    if images:
+        transformers.Gemma4ImageProcessorPil(max_soft_tokens=70).save_pretrained(d)
+    return d
+
+
+def save_gemma4_checkpoint(base: str, d: str) -> str:
+    """A TEXT Strands Decider checkpoint on a tiny Gemma 4 base, with a non-trivial adapter."""
+    from strands_decider.modeling import StrandsDeciderConfig, StrandsDeciderModel
+
+    cfg = StrandsDeciderConfig(base_model=base, head_type="pointer", pointer_dim=16,
+                               torch_dtype="float32", max_length=1024, lora_targets=ATTENTION_MLP,
+                               temperature_by_kind={"noul": 0.9, "choice": 0.7})
+    model = StrandsDeciderModel.from_pretrained_base(cfg)
+    with torch.no_grad():
+        for n, p in model.torso.named_parameters():
+            if "lora_B" in n:
+                p.normal_(0, 0.05)
+    model.save_pretrained(d)
     return d

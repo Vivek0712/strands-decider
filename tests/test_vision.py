@@ -111,6 +111,30 @@ def test_expansion_and_grid():
     assert fit_image(Image.new("RGB", (100, 50)), 448).size == (100, 50)  # never upscaled
 
 
+@pytest.mark.parametrize("size", [(1000, 800), (1280, 3000), (3000, 200)])
+def test_pixel_budget_keeps_the_aspect_and_stays_within_budget(size):
+    w, h = fit_image(Image.new("RGB", size), 0, 400_000).size
+    assert w * h <= 400_000 and w * h > 0.99 * 400_000
+    assert abs(w / h - size[0] / size[1]) < 0.02 * size[0] / size[1]
+    assert fit_image(Image.new("RGB", (640, 480)), 0, 400_000).size == (640, 480)  # never upscaled
+    assert fit_image(Image.new("RGB", (900, 301)), 448, 400_000).size == (448, 150)  # long side rounds
+    # the long side applies first, the budget after it
+    assert fit_image(Image.new("RGB", (900, 300)), 448, 400_000).size == (448, 149)
+    assert fit_image(Image.new("RGB", (900, 900)), 800, 400_000).size == (632, 632)
+    assert fit_image(Image.new("RGB", (1000, 1000)), 600, 400_000).size == (600, 600)
+
+
+def test_engine_applies_the_pixel_budget(ckpt):
+    req = SystemOneRequest(state="", questions={"signed": QUESTIONS["signed"]}, images=[_b64(640, 640, 7)])
+
+    def tokens(**image):
+        eng = load_vision_engine(ckpt, EngineConfig(device="cpu"), image_long_side=0, **image)
+        return eng.evaluate(req).usage.input_tokens
+
+    # 640 x 640 is 400 tokens whole; a 100k-pixel budget brings it to 316 x 316 (about 100)
+    assert tokens() - tokens(image_max_pixels=100_000) >= 250
+
+
 def test_checkpoint_tokenizer_reads_text(engines):
     """The tokeniser that comes back from the checkpoint keeps every character, so the
     tests below exercise real state and question text."""
@@ -204,6 +228,36 @@ def test_image_answers_match_full_forward(engines, sizes):
         assert max(abs(x - y) for x, y in zip(got, ref, strict=True)) < 1e-5
 
 
+def test_image_temperatures_apply_to_image_questions_only(engines):
+    _, vision = engines
+    cfg = vision.model.config
+    rendered = [render_question(q) for q in QUESTIONS.values()]  # noul, choice, score
+    pil = [fit_image(decode_image(_b64(320, 320, 5)), 448)]
+    req = SystemOneRequest(state=STATE, questions=QUESTIONS)
+    plain, _ = vision._image_probs("Checkout page.", pil, rendered)
+    text = vision.evaluate(req).model_dump()["answers"]
+    try:
+        cfg.image_temperature_by_kind = {"noul": 0.3}
+        sharp, _ = vision._image_probs("Checkout page.", pil, rendered)
+        assert vision.evaluate(req).model_dump()["answers"] == text  # text questions keep theirs
+    finally:
+        cfg.image_temperature_by_kind = {}
+    assert torch.equal(sharp[1:], plain[1:])  # kinds without an image temperature keep the text one
+    # noul at 0.3 instead of the text temperature 0.9: the same logits, rescaled
+    expected = torch.softmax(plain[0, :2].log() * 0.9 / 0.3, -1)
+    assert torch.allclose(sharp[0, :2], expected, atol=1e-5)
+
+
+def test_evaluation_scores_blind_rows_at_the_text_temperatures(ckpt):
+    from vision.run import Strands
+
+    item = {"kind": "noul", "question": "Is the form signed?", "options": [("no", ""), ("yes", "")],
+            "gold": 1, "image": base64.b64decode(_b64(320, 320, 6))}
+    plain, sharp = Strands(ckpt), Strands(ckpt, image_temps={"noul": 0.3})
+    assert sharp.probs(item, blind=False) != pytest.approx(plain.probs(item, blind=False))
+    assert sharp.probs(item, blind=True) == plain.probs(item, blind=True)
+
+
 def test_image_forward_leaves_no_position_state(engines):
     """A plain image forward on the model (as in training or evaluation) stores
     `rope_deltas` on the torso; the next text request must not read it."""
@@ -266,6 +320,32 @@ def test_load_vision_engine_keeps_the_server_settings(ckpt):
     assert (eng.cfg.strict_window, eng.cfg.max_batch, eng.cfg.model_name) == (True, 3, "vd-test")
 
 
+def test_server_sizes_images_as_asked(ckpt):
+    from fastapi.testclient import TestClient
+
+    from strands_decider import server
+
+    client = TestClient(server.create_app(ckpt, device="cpu", vision=True, image_long_side=0,
+                                          image_max_pixels=400_000))
+    eng = server.get_engine()
+    assert (eng.vcfg.image_long_side, eng.vcfg.image_max_pixels) == (0, 400_000)
+    assert client.get("/health").json()["image_max_pixels"] == 400_000
+
+
+def test_serve_cli_passes_the_image_size(monkeypatch):
+    from typer.testing import CliRunner
+
+    from strands_decider import server
+    from strands_decider.cli import app
+
+    seen = {}
+    monkeypatch.setattr(server, "serve", lambda checkpoint, **kw: seen.update(kw))
+    res = CliRunner().invoke(app, ["serve", "ckpt", "--device", "cpu", "--vision",
+                                   "--image-long-side", "0", "--image-max-pixels", "400000"])
+    assert res.exit_code == 0, res.output
+    assert (seen["vision"], seen["image_long_side"], seen["image_max_pixels"]) == (True, 0, 400_000)
+
+
 def test_server_routes_images(ckpt):
     from fastapi.testclient import TestClient
 
@@ -277,6 +357,7 @@ def test_server_routes_images(ckpt):
     r = vision_app.post("/v1/systemone", json=body)
     assert r.status_code == 200, r.text
     assert 0.0 <= r.json()["answers"]["signed"]["noul"] <= 1.0
-    assert vision_app.get("/health").json()["vision"] is True
+    health = vision_app.get("/health").json()
+    assert (health["vision"], health["image_long_side"], health["image_max_pixels"]) == (True, 448, 0)
     text_app = TestClient(server.create_app(ckpt, device="cpu"))
     assert text_app.post("/v1/systemone", json=body).status_code == 422

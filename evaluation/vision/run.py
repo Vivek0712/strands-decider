@@ -7,6 +7,7 @@ Systems, each also scored "blind" (the image removed) to measure image dependenc
             question kind applied as the server applies them.
   qwen      Qwen3.5-2B-Base untrained, read the way the KL reference reads it: the
             frozen torso's option-number logits at <answer>, image in <state>.
+  gemma     google/gemma-4-E2B untrained, read the same way (its logits soft-capped).
   mapika    Mapika/decider-2b-vision through its own code (letter logits at an answer
             slot, its own prompt, images <= 768 px), for comparison.
 
@@ -15,6 +16,10 @@ score at chance), POPE adversarial (object presence on COCO val2014), and the Im
 JevBench preview items, optional, rebuilt from their source datasets by a separate
 builder (README.md; only the 60 "exact" items are faithful, and the official Image
 JevBench set is not downloadable).
+
+`--checkpoint` may be any Strands Decider checkpoint on a multimodal base: v19 (Qwen3.5),
+an image-trained one, or a Gemma 4 E2B one (text or image-trained); the family is read
+from its `base_model`, and images are processed by that base's pinned PIL processor.
 
 Every item is one question about one image, so each is forwarded whole (state + question);
 `VisionEngine`'s shared-prefix path gives the same probabilities to < 1e-5
@@ -39,7 +44,7 @@ import sys
 import time
 import traceback
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, ClassVar
 
 import torch
 
@@ -50,17 +55,12 @@ from strands_decider.infer import _option_token_index
 from strands_decider.modeling import StrandsDeciderConfig, masked_log_softmax
 from strands_decider.prompting import render_question
 from strands_decider.schema import ChoiceQuestion, NoulQuestion, Question
-from strands_decider.vision import (
-    VisionDeciderModel,
-    expand_image_tokens,
-    fit_image,
-    image_tokens_for_grid,
-    render_image_state,
-)
+from strands_decider.vision import ImagePrompt, VisionDeciderModel, fit_image, load_vision_model
 
 # Every download is pinned to the revision the published results were measured on.
 V19, V19_REV = "StrandsAgents/strands-decider-2B-hobson-v19", "bb282d786bc251fd4e3068de3ada9ddbb38127cd"
 BASE, BASE_REV = "Qwen/Qwen3.5-2B-Base", "b1485b2fa6dfa1287294f269f5fb618e03d52d7c"
+GEMMA, GEMMA_REV = "google/gemma-4-E2B", "d29ff6b45f081a49ee2733a859c9c9c2d95d1a6f"
 MAPIKA, MAPIKA_REV = "Mapika/decider-2b-vision", "863e290863655f1d6b69324d77d09ac972d21609"
 NB_REPO, NB_FILE, NB_REV = ("BaiqiL/NaturalBench", "data/train-00000-of-00003.parquet",
                             "ba41a7d564877a9b64c094b08015ca493cc3e54b")
@@ -106,9 +106,11 @@ def _mc(question: str) -> tuple[str, list[tuple[str, str]]]:
     return stem.strip(), opts
 
 
-def naturalbench(n_groups: int, local: str | None) -> Iterator[dict[str, Any]]:
+def naturalbench(n_groups: int, local: str | None, start: int = 0) -> Iterator[dict[str, Any]]:
     # Question k on image j -> column Image_j_Question_k (a fixed pattern in every group).
-    df = _parquet(NB_REPO, NB_FILE, NB_REV, local).head(n_groups)
+    # The evaluation set is the first 300 groups; `start=300` gives held-out groups on
+    # which to fit image temperatures (temps.py).
+    df = _parquet(NB_REPO, NB_FILE, NB_REV, local).iloc[start : start + n_groups]
     for _, row in df.iterrows():
         imgs = [row["Image_0"]["bytes"], row["Image_1"]["bytes"]]
         for k in (0, 1):
@@ -167,12 +169,11 @@ class _DeciderSystem:
 
     model: VisionDeciderModel
     long_side = 448
+    max_pixels = 0
     device = "cpu"
 
-    def __init__(self, base: str) -> None:
-        from transformers import Qwen2VLImageProcessorPil
-
-        self.proc = Qwen2VLImageProcessorPil.from_pretrained(base)  # as VisionEngine does
+    def __init__(self, prompter: ImagePrompt) -> None:
+        self.prompter = prompter  # the model's own, its processor pinned as VisionEngine pins it
 
     def _question(self, it: dict[str, Any]) -> Question:
         raise NotImplementedError
@@ -184,10 +185,8 @@ class _DeciderSystem:
         counts: list[int] = []
         n_img = 0 if blind else 1
         if n_img:
-            out = self.proc(images=[fit_image(_pil(it["image"]), self.long_side)], return_tensors="pt")
-            counts = image_tokens_for_grid(out["image_grid_thw"].tolist(), self.proc.merge_size)
-            mm = {"pixel_values": out["pixel_values"], "image_grid_thw": out["image_grid_thw"]}
-        text = expand_image_tokens(render_image_state("", n_img), counts) + rq.text
+            counts, mm = self.prompter.process([fit_image(_pil(it["image"]), self.long_side, self.max_pixels)])
+        text = self.prompter.state("", counts) + rq.text
         enc = self.model.tokenizer(text, return_offsets_mapping=True)
         opt = _option_token_index(enc["offset_mapping"], rq.option_spans, len(text) - len(rq.text))
         ids = torch.tensor([enc["input_ids"]], device=self.device)
@@ -204,16 +203,23 @@ class _DeciderSystem:
 class Strands(_DeciderSystem):
     name = "strands-v19"
 
-    def __init__(self, checkpoint: str = V19, device: str = "cpu") -> None:
+    def __init__(self, checkpoint: str = V19, device: str = "cpu",
+                 image_temps: dict[str, float] | None = None) -> None:
         from huggingface_hub import snapshot_download
 
         if checkpoint == V19:
             checkpoint = snapshot_download(V19, revision=V19_REV)
         self.device = device
-        self.model = VisionDeciderModel.load(checkpoint).to(torch.float32).to(device).eval()
-        super().__init__(self.model.config.base_model)
+        # Qwen3.5's own tower, or a grafted encoder (strands_decider.graft) when the
+        # checkpoint holds a projector
+        self.model = load_vision_model(checkpoint).to(torch.float32).to(device).eval()
+        super().__init__(self.model.image_prompt())
         cfg = self.model.config
-        self.temps = dict(cfg.temperature_by_kind)
+        # Questions over an image take the image temperatures (the checkpoint's, or
+        # `image_temps`), as VisionEngine applies them; the image-removed pass is a
+        # text-only request, answered with the text ones.
+        self.text_temps = dict(cfg.temperature_by_kind)
+        self.temps = {**cfg.temperature_by_kind, **(image_temps or cfg.image_temperature_by_kind)}
         self.t_default = cfg.temperature
 
     def _question(self, it: dict[str, Any]) -> Question:
@@ -225,27 +231,31 @@ class Strands(_DeciderSystem):
     def probs(self, it: dict[str, Any], blind: bool) -> list[float]:
         rq, ids, opt, mm = self._inputs(it, blind)
         out = self.model(ids, torch.ones_like(ids), torch.tensor([rq.n_slots], device=self.device), opt_idx=opt,
-                         temperature=self.temps.get(it["kind"], self.t_default), **mm)
+                         temperature=(self.text_temps if blind else self.temps).get(it["kind"], self.t_default),
+                         **mm)
         p = masked_log_softmax(out["logits"].float().cpu(), torch.tensor([rq.n_slots])).exp()[0]
         return [float(p[s]) for s in self._gold_slot(rq, it)]
 
 
 class QwenUntrained(_DeciderSystem):
+    """An untrained multimodal base (Qwen3.5-2B-Base by default), its own option-number readout."""
+
     name = "qwen-untrained"
+    pinned: ClassVar[dict[str, str]] = {BASE: BASE_REV, GEMMA: GEMMA_REV}
 
     def __init__(self, base: str = BASE, dtype: str = "float32", device: str = "cpu") -> None:
         from huggingface_hub import snapshot_download
         from transformers import AutoTokenizer
 
-        if base == BASE:
-            base = snapshot_download(BASE, revision=BASE_REV)
+        if base in self.pinned:
+            base = snapshot_download(base, revision=self.pinned[base])
 
         cfg = StrandsDeciderConfig(base_model=base, use_lora=False, head_type="pointer",
                                    torch_dtype=dtype, max_length=4096)
         tok = AutoTokenizer.from_pretrained(base)
         self.device = device
         self.model = VisionDeciderModel(cfg, VisionDeciderModel._load_torso(cfg, None, None), tok).to(device).eval()
-        super().__init__(base)
+        super().__init__(self.model.image_prompt())
 
     def _question(self, it: dict[str, Any]) -> Question:
         if it["kind"] == "noul":
@@ -257,10 +267,15 @@ class QwenUntrained(_DeciderSystem):
     def probs(self, it: dict[str, Any], blind: bool) -> list[float]:
         rq, ids, _, mm = self._inputs(it, blind)
         lp, _ = self.model.frozen_slot_log_probs(ids, torch.ones_like(ids),
-                                                 torch.tensor([rq.n_slots], device=self.device),
-                                                 pixel_values=mm.get("pixel_values"),
-                                                 image_grid_thw=mm.get("image_grid_thw"))
+                                                 torch.tensor([rq.n_slots], device=self.device), **mm)
         return [float(lp[0, s].exp()) for s in self._gold_slot(rq, it)]
+
+
+class GemmaUntrained(QwenUntrained):
+    name = "gemma-untrained"
+
+    def __init__(self, dtype: str = "float32", device: str = "cpu") -> None:
+        super().__init__(GEMMA, dtype=dtype, device=device)
 
 
 class Mapika:
@@ -295,9 +310,10 @@ class Mapika:
 # ---- driver ------------------------------------------------------------------------------
 
 
-def run_system(system: Any, items: list[dict[str, Any]], out: str) -> dict[str, list[dict[str, Any]]]:
+def run_system(system: Any, items: list[dict[str, Any]], out: str,
+               blind_modes: tuple[bool, ...] = (False, True)) -> dict[str, list[dict[str, Any]]]:
     res: dict[str, list[dict[str, Any]]] = {}
-    for blind in (False, True):
+    for blind in blind_modes:
         tag = f"{system.name}{'-blind' if blind else ''}"
         path = os.path.join(out, f"{tag}.jsonl")
         done: dict[str, dict[str, Any]] = {}
@@ -329,8 +345,8 @@ def _versions() -> dict[str, Any]:
     return {"torch": torch.__version__, "transformers": transformers.__version__,
             "python": platform.python_version(), "machine": platform.processor() or platform.machine(),
             "threads": torch.get_num_threads(),
-            "revisions": {V19: V19_REV, BASE: BASE_REV, MAPIKA: MAPIKA_REV, NB_REPO: NB_REV,
-                          POPE_REPO: POPE_REV}}
+            "revisions": {V19: V19_REV, BASE: BASE_REV, GEMMA: GEMMA_REV, MAPIKA: MAPIKA_REV,
+                          NB_REPO: NB_REV, POPE_REPO: POPE_REV}}
 
 
 def main() -> None:
@@ -343,29 +359,47 @@ def main() -> None:
     ap.add_argument("--nb-local")
     ap.add_argument("--pope-local")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    ap.add_argument("--long-side", type=int, default=448,
+                    help="longest image side for strands/qwen (0: no cap)")
+    ap.add_argument("--max-pixels", type=int, default=0,
+                    help="pixel budget per image for strands/qwen, aspect kept, never upscaled (0: none)")
+    ap.add_argument("--nb-start", type=int, default=0,
+                    help="first NaturalBench group (300: held-out groups for fitting image temperatures)")
+    ap.add_argument("--temps", default="",
+                    help='JSON per-kind image temperatures for the strands system, e.g. {"noul": 0.76}')
+    ap.add_argument("--no-blind", action="store_true", help="skip the image-removed pass")
     ap.add_argument("--checkpoint", default=V19,
-                    help="the strands system's checkpoint: v19 by default, or a fine-tuned one")
+                    help="the strands system's checkpoint: v19 by default, or a fine-tuned one, "
+                         "or one on google/gemma-4-E2B (the family is read from its base_model)")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
-    items = (list(naturalbench(a.nb_groups, a.nb_local)) if a.nb_groups else []) + \
+    _DeciderSystem.long_side = a.long_side
+    _DeciderSystem.max_pixels = a.max_pixels
+    items = (list(naturalbench(a.nb_groups, a.nb_local, a.nb_start)) if a.nb_groups else []) + \
         (list(pope(a.pope, a.pope_local)) if a.pope else [])
     if a.ijb_jsonl:
         items += list(image_jevbench(a.ijb_jsonl))
     print(f"[vision-eval] {len(items)} items", flush=True)
-    systems = {"strands": lambda: Strands(a.checkpoint, device=a.device),
+    image_temps = {k: float(v) for k, v in json.loads(a.temps).items()} if a.temps else None
+    systems = {"strands": lambda: Strands(a.checkpoint, device=a.device, image_temps=image_temps),
                "qwen": lambda: QwenUntrained(device=a.device),
+               "gemma": lambda: GemmaUntrained(device=a.device),
                "mapika": lambda: Mapika(device=a.device)}
     all_res: dict[str, list[dict[str, Any]]] = {}
     errors: dict[str, str] = {}
+    temperatures: dict[str, Any] = {}  # the strands system's, for rescoring (temps.py)
     for name in a.systems.split(","):
         try:
-            all_res.update(run_system(systems[name](), items, a.out))
+            system = systems[name]()
+            if isinstance(system, Strands):
+                temperatures = {"image": system.temps, "text": system.text_temps, "default": system.t_default}
+            all_res.update(run_system(system, items, a.out, (False,) if a.no_blind else (False, True)))
         except Exception:
             errors[name] = traceback.format_exc()
             print(f"[vision-eval] {name} FAILED\n{errors[name]}", flush=True)
         with open(os.path.join(a.out, "summary.json"), "w") as fh:
             json.dump({"args": vars(a), "versions": _versions(), "errors": errors,
-                       "scores": score_runs(all_res)}, fh, indent=2)
+                       "temperatures": temperatures, "scores": score_runs(all_res)}, fh, indent=2)
     if errors:
         sys.exit(1)
 

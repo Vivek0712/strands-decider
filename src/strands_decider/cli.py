@@ -329,10 +329,19 @@ def serve_cmd(
     ),
     vision: bool = typer.Option(
         False, "--vision",
-        help="Keep Qwen3.5's vision tower so requests may carry `images` (docs/vision.md).",
+        help="Keep the base's vision tower (Qwen3.5 or Gemma 4), or load a checkpoint's grafted "
+        "encoder and projector, so requests may carry `images` (docs/vision.md).",
     ),
     max_batch: int = typer.Option(
         32, "--max-batch", help="Questions encoded per forward pass; lower it for very long states.",
+    ),
+    image_long_side: int = typer.Option(
+        448, "--image-long-side", help="With --vision: longest image side after resizing (0: no cap)."
+    ),
+    image_max_pixels: int = typer.Option(
+        0, "--image-max-pixels",
+        help="With --vision: pixels per image after resizing (0: no cap); the image-trained "
+        "checkpoints were trained at 400000 with --image-long-side 0.",
     ),
 ) -> None:
     """Serve POST /v1/systemone. JevBench's typesafe adapter runs against it unchanged."""
@@ -345,6 +354,7 @@ def serve_cmd(
         checkpoint, host=host, port=port, device=selected_device,
         use_prefix_cache=not no_prefix_cache, model_name=model_name,
         strict_window=strict_window, max_batch=max_batch, vision=vision,
+        image_long_side=image_long_side, image_max_pixels=image_max_pixels,
     )
 
 
