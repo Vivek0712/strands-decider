@@ -11,6 +11,7 @@ Three measures, each with a paired comparison against a baseline:
 | --- | --- | --- |
 | JevBench v1 public, scored with a local v1.5 proxy | `evaluation/jevbench/jevbench.sh`, then `evaluation/jevbench/v15_proxy.py` | The 231 public tasks, answered by `strands-decider serve`, graded with JevBench v1.5's published rules |
 | Unseen task families | `evaluation/unseen/` | 1,050 questions: four public families no model trains on, plus RuleTaker at a held-out depth (depths 0-2 are trained on), graded with the same rules |
+| Unseen task families, v2 | `evaluation/unseen_v2/` | 9,000 questions from 11 families, a third per type, with dev/test splits and item-paired comparisons ([README](../evaluation/unseen_v2/README.md)); the 4B candidate's unseen measure |
 | Images | `evaluation/vision/run.py` | NaturalBench, POPE and the rebuildable Image JevBench preview items ([docs/vision.md](vision.md#how-well-it-does)) |
 
 Paths are relative to the repository root unless they are links.

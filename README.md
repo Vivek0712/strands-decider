@@ -250,12 +250,13 @@ the downloaded weights, and the commands to retrain. The numbers are local measu
 ([docs/evaluating.md](docs/evaluating.md)); the board positions are estimates pending an
 official submission.
 
-| Model | Base, size | Answers | Estimated 2B-class position (unofficial) |
+| Model | Base, size | Answers | Estimated position (unofficial) |
 | --- | --- | --- | --- |
-| [strands-decider-2B-hobson-v20](docs/models/strands-decider-2B-hobson-v20.md) | Qwen3.5-2B-Base, 2B | text | #1 strictly-2B text model |
-| [strands-decider-2B-hobson-v20-balanced](docs/models/strands-decider-2B-hobson-v20-balanced.md) | Qwen3.5-2B-Base, 2B | text and images | best text+image 2B candidate (the only 2B candidate on both boards); #2 on Image JevBench |
-| [strands-decider-2.5B-minicpm-v21](docs/models/strands-decider-2.5B-minicpm-v21.md) | MiniCPM5-2B, 2.5B | text | top 3 text |
-| [strands-decider-2.5B-minicpm-v21-vl](docs/models/strands-decider-2.5B-minicpm-v21-vl.md) | MiniCPM5-2B + SigLIP2, 2.5B + 0.4B | text (images weakly) | #1 text |
+| [strands-decider-2B-hobson-v20](docs/models/strands-decider-2B-hobson-v20.md) | Qwen3.5-2B-Base, 2B | text | 2B class: #1 strictly-2B text model |
+| [strands-decider-2B-hobson-v20-balanced](docs/models/strands-decider-2B-hobson-v20-balanced.md) | Qwen3.5-2B-Base, 2B | text and images | 2B class: best text+image 2B candidate (the only 2B candidate on both boards); #2 on Image JevBench |
+| [strands-decider-2.5B-minicpm-v21](docs/models/strands-decider-2.5B-minicpm-v21.md) | MiniCPM5-2B, 2.5B | text | 2B class: top 3 text |
+| [strands-decider-2.5B-minicpm-v21-vl](docs/models/strands-decider-2.5B-minicpm-v21-vl.md) | MiniCPM5-2B + SigLIP2, 2.5B + 0.4B | text (images weakly) | 2B class: #1 text |
+| [strands-decider-4B-hobson-v22](docs/models/strands-decider-4B-hobson-v22.md) | Qwen3.5-4B, 4B | text and images | #1 overall on the text leaderboard (composite ~74 vs 73.70 for Cygnet, inside the tie band) and #1 in the 4B class; image board ~#3 to #15 |
 
 ## Why 2B?
 
