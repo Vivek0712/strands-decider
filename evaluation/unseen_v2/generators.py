@@ -1,7 +1,8 @@
 """The generator-backed families of unseen-v2: every gold label is computed by a program.
 
 Four families, each asked as all three question types, none of them a training family
-(data/sources.md; tests/test_unseen_v2.py holds the disjointness):
+(data/sources.md, and src/strands_decider/data/families/ for the A1 generators;
+tests/test_unseen_v2.py and tests/test_families.py hold the disjointness):
 
   chess       positions reached by seeded random play (python-chess, rules only, no
               engine): is the side to move in check, is a move legal, which move gives

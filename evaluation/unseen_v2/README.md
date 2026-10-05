@@ -25,7 +25,8 @@ a gold label uniformly, and draw until a row has it, so labels are balanced with
 template; a score item too close to a level boundary is not drawn. Excluded on purpose:
 BoolQ and MNLI are training sources (so no BoolQ-hard or e-SNLI), and nothing comes from
 JevBench or Image JevBench. `tests/test_unseen_v2.py` holds both, and that no family is a
-training family. The sources, revisions, licences and file hashes are in
+training family; `tests/test_families.py`, that none is an A1 training family
+(`strands_decider.data.families`). The sources, revisions, licences and file hashes are in
 [data/sources.md](../../data/sources.md).
 
 | Script | What it does |

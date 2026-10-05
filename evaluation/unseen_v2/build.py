@@ -12,7 +12,8 @@ headline gives them:
   score    STS-B 600, chess / arithmetic / calendar / seating 600 each
 
 Not one of these families is in a training mixture: data/sources.md lists every training
-source, and tests/test_unseen_v2.py checks the families against it. BoolQ and MNLI are
+source, and tests/test_unseen_v2.py and tests/test_families.py check the families against it
+and against the A1 training generators (strands_decider.data.families). BoolQ and MNLI are
 training sources, so BoolQ-hard and e-SNLI are left out, as is anything taken from
 JevBench or Image JevBench.
 
