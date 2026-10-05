@@ -34,6 +34,7 @@ training family; `tests/test_families.py`, that none is an A1 training family
 | [`build.py`](build.py) | Builds the rows from one seed; writes a manifest (revisions, file sha256s, library versions, the output's sha256) beside them |
 | [`generators.py`](generators.py) | The four generator families |
 | [`score.py`](score.py) | v1's grading (yes/no band, chance-corrected credit, score by expected level) plus NLL, yes/no Brier, band mass, score RPS = (1/(K-1))·Σ(F_k − 1[gold ≤ k])², top-probability ECE; `--split`; `--vs`: paired by item, bootstrap 95% intervals, `--resample-runs` for items × seeds |
+| [`interpolate.py`](interpolate.py) | NLL and unseen-v2 measures along the line between two seeds (weighted soups); soup only if there is no barrier |
 
 ```bash
 pip install "strands-decider[unseen]"     # datasets and python-chess
