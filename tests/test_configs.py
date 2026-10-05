@@ -169,3 +169,28 @@ def test_v21_vl_is_v19_images_on_the_v21_soup_with_the_stage1_projector():
     assert v21vl["projector_from"] == align["output_dir"]
     v21 = _load("configs", "experiments", "strands-decider-2.5B-minicpm-v21.yaml")
     assert (align["base_model"], align["base_revision"]) == (v21["base_model"], v21["base_revision"])
+
+
+def test_v22_pilot_is_the_qwen35_bakeoff_recipe_on_the_post_trained_4b_for_1500_steps():
+    pilot = _load("configs", "experiments", "strands-decider-4B-hobson-v22-pilot.yaml")
+    ref = _load("configs", "experiments", "bakeoff", "qwen35-2b.yaml")
+    assert _differing_keys(pilot, ref) == {"base_model", "base_revision", "max_steps", "output_dir"}
+    assert (pilot["base_model"], pilot["base_revision"], pilot["max_steps"]) == (
+        "Qwen/Qwen3.5-4B", "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a", 1500)
+
+
+def test_v22_text_stage_continues_the_pilot_on_the_v20_recipe_plus_a1_for_a_full_epoch():
+    v22, v20 = _load("configs", "experiments", "strands-decider-4B-hobson-v22.yaml"), _load(
+        "configs", "experiments", "strands-decider-2B-hobson-v20.yaml")
+    pilot = _load("configs", "experiments", "strands-decider-4B-hobson-v22-pilot.yaml")
+    assert v22["continue_from"] == pilot["output_dir"]
+    assert v22["train_files"] == v20["train_files"] + ["data/families_a1.jsonl"]
+    assert _differing_keys(v22, v20) == {"train_files", "base_model", "continue_from", "max_steps",
+                                         "output_dir"}
+    assert v22["max_steps"] == 0 and v22["init_seed"] == 0  # one epoch; both seeds from one point
+
+
+def test_v22_vl_is_the_v20_vl_image_recipe_on_the_v22_text_soup():
+    v22vl, v20vl = _vision("strands-decider-4B-hobson-v22-vl"), _vision("strands-decider-2B-hobson-v20-vl")
+    assert v22vl["init_from"] == "checkpoints/strands-decider-4B-hobson-v22-text"
+    assert _differing_keys(v22vl, v20vl) == {"init_from", "output_dir"}
