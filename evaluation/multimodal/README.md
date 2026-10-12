@@ -17,4 +17,5 @@ The text check behind docs/audio.md runs `evaluation/jevbench/jevbench.sh` twice
 once with `SERVE_EXTRA=--audio`, and compares the two `results.jsonl` item by item.
 
 The recorded runs (per-item probabilities for every reading, both JevBench runs and each
-`summary.json`) are published as RESULTS_LINK.
+`summary.json`) are published as the release
+[gemma4-multimodal-eval-2026-10-12](https://github.com/Vivek0712/strands-decider/releases/tag/gemma4-multimodal-eval-2026-10-12).
